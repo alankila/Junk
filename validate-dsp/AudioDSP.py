@@ -180,14 +180,14 @@ def lin2db(x):
 def main():
     et = Biquad()
     #et.setRC(700, 44100);
-    et.setHighShelf(800, 44100, -12.0, 0.72);
+    et.setHighShelf(10000, 44100, -12.0, 0.72);
    
     startFreq = 20.0
     endFreq = 22050.0
 
     freq = startFreq;
     while freq < endFreq:
-        arg = freq / 44100.0 * math.pi
+        arg = freq / 44100.0 * math.pi * 2
         z = math.sin(arg) * 1j + math.cos(arg)
         vector = et.transfer(z)
 
