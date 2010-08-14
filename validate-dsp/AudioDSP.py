@@ -1,7 +1,6 @@
 #!/usr/bin/python
 
 import math, random
-import scipy.signal as s
 
 samplingFrequency = 44100;
 
@@ -145,6 +144,11 @@ class Biquad:
 
         return y0;
 
+    def transfer(self, omega):
+        nom = self.mB0 + self.mB1 / omega + self.mB2 / (omega*omega)
+        den =        1 + self.mA1 / omega + self.mA2 / (omega*omega)
+        return nom / den;
+
 class EffectTone:
     __slots__ = ['mFilterL']
 
@@ -176,24 +180,25 @@ def lin2db(x):
 def main():
     et = Biquad()
     #et.setRC(700, 44100);
-    et.setHighShelf(900, 44100, -12.0, 0.75);
+    et.setHighShelf(800, 44100, -12.0, 0.72);
+   
+    startFreq = 20.0
+    endFreq = 22050.0
 
-    out = [None] * 4096
-    out[0] = et.process(1)
-    for _ in range(1, len(out)):
-        out[_] = et.process(0)
+    freq = startFreq;
+    while freq < endFreq:
+        arg = freq / 44100.0 * math.pi
+        z = math.sin(arg) * 1j + math.cos(arg)
+        vector = et.transfer(z)
 
-    out = s.fft(out)
-
-    for _ in range(0, len(out)/2+1):
-        vector = out[_]
-        freq = 44100 * _ / len(out)
         mag = lin2db(abs(vector))
         pha = math.atan2(vector.imag, vector.real)
         delay = 0
         if freq != 0:
-            delay = (pha / math.pi) / freq * 1000 # ms
+            delay = (pha / math.pi) / freq * 1000000 # ms
         print "%d %.2f %.2f %f" % (freq, mag, pha, delay)
+        
+        freq *= 1.1
 
 if __name__ == '__main__':
     main()
