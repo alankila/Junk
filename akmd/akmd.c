@@ -31,8 +31,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <linux/akm8973.h>
-#include <linux/bma150.h>
+#include "akm8973.h"
+#include "bma150.h"
 
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
@@ -43,12 +43,15 @@ static enum { READ, SLEEP } state;
 
 static void open_fds()
 {
+    short mode;
+ 
     akm_fd = open(AKM_NAME, O_RDONLY);
     if (akm_fd == -1) {
         perror("Failed to open " AKM_NAME);
         _exit(1);
     }
-    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, AKECS_MODE_POWERDOWN) != 0) {
+    mode = AKECS_MODE_POWERDOWN;
+    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
         perror("Failed to put akm8973 to sleep initially.");
         _exit(2);
     }
@@ -58,7 +61,8 @@ static void open_fds()
         perror("Failed to open " BMA150_NAME);
         _exit(3);
     }
-    if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, BMA_MODE_SLEEP) != 0) {
+    mode = BMA_MODE_SLEEP;
+    if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
         perror("Failed to put bma150 to sleep initially.");
         _exit(4);
     }
@@ -68,9 +72,10 @@ static void readLoop()
 {
     unsigned int status;
     unsigned short delay;
+    short mode;
 
     struct timespec interval;
-    signed char akm_data[RBUFF_SIZE + 1];
+    signed char akm_data[5];
     short bma150_data[7];
     short final_data[12];
 
@@ -81,11 +86,13 @@ static void readLoop()
 
     /* Nobody has aot socket open? We'll close the shop... */
     if (status == 0) {
-        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, AKECS_MODE_POWERDOWN) != 0) {
+        mode = AKECS_MODE_POWERDOWN;
+        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
             perror("akm8973: Failed to SET_MODE=POWERDOWN");
             _exit(11);
         }
-        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, BMA_MODE_SLEEP) != 0) {
+        mode = BMA_MODE_SLEEP;
+        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
             perror("bma150: Failed to SET_MODE=SLEEP");
             _exit(12);
         }
@@ -96,7 +103,8 @@ static void readLoop()
 
     /* Measuring puts readable state to 0. It is going to take
      * some time before the values are ready. */
-    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, AKECS_MODE_MEASURE) != 0) {
+    mode = AKECS_MODE_MEASURE;
+    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
         perror("akm8973: Failed to SET_MODE=READ");
         _exit(13);
     }
@@ -148,6 +156,7 @@ static void readLoop()
 void sleepLoop()
 {
     int status;
+    short mode;
     struct timespec interval;
 
     /* Aot has been opened? Resume if so. */
@@ -157,8 +166,9 @@ void sleepLoop()
     }
 
     if (status != 0) {
+        mode = BMA_MODE_NORMAL;
         // akm device is woken by readLoop().
-        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, BMA_MODE_NORMAL) != 0) {
+        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
             perror("bma150: Failed to SET_MODE=NORMAL");
             _exit(21);
         }
