@@ -129,9 +129,13 @@ static void readLoop()
     final_data[3]  = akm_data[3]; // temperature  -30 .. 85
     final_data[4]  = 3;           // status of mag. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
     final_data[5]  = 3;           // status of acc. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
-    final_data[6]  = bma150_data[0] << 2; // acceleration X -1872 .. 1872
-    final_data[7]  = bma150_data[1] << 2; // acceleration Y -1872 .. 1872
-    final_data[8]  = bma150_data[2] << 2; // acceleration Z -1872 .. 1872
+
+    // 720 = LSG, CONVERT_A = GRAVITY_EARTH/LSG
+    final_data[6]  = bma150_data[0] * 720 / 256;
+    final_data[7]  = bma150_data[1] * 720 / 256;
+    final_data[8]  = bma150_data[2] * 720 / 256;
+
+    // CONVERT_M = 1/16
     final_data[9]  = akm_data[0] << 3; // magnetic X -2048 .. 2032
     final_data[10] = akm_data[1] << 3; // magnetic Y -2048 .. 2032
     final_data[11] = akm_data[2] << 3; // magnetic Z -2048 .. 2032
