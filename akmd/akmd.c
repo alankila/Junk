@@ -230,7 +230,7 @@ static state_t readLoop(char tz, int *digital_adjustment)
     /* pitch */
     final_data[1] = atan2f(a[1], -a[2]) / (float) M_PI * 180.0f;
     /* roll */
-    final_data[2] = 90.0f - acosf(a[0] / length_i(a)) / M_PI * 180.0f;
+    final_data[2] = 90.0f - acosf(a[0] / length_i(a)) / (float) M_PI * 180.0f;
     
     final_data[3] = temperature;
     /* FIXME: how to establish accuracy? */
