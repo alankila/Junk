@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+	android:orientation="vertical" android:layout_width="fill_parent"
+	android:layout_height="fill_parent">
+
+	<Button android:layout_width="wrap_content"
+		android:layout_height="wrap_content" android:text="Reset" android:id="@+id/Reset"></Button>
+
+	<LinearLayout android:layout_height="wrap_content"
+		android:layout_width="fill_parent" android:layout_margin="2sp">
+
+		<com.bel.android.magneticflux.MagneticSurface
+			android:layout_width="100px" android:layout_height="100px"
+			android:layout_margin="2sp" android:id="@+id/XY" />
+		<com.bel.android.magneticflux.MagneticSurface
+			android:layout_height="100px" android:layout_width="100px"
+			android:layout_margin="2sp" android:id="@+id/XZ" />
+		<com.bel.android.magneticflux.MagneticSurface
+			android:layout_height="100px" android:layout_width="100px"
+			android:layout_margin="2sp" android:id="@+id/YZ" />
+
+	</LinearLayout>
+
+<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/Field" android:text="field strength"></TextView>
+<TextView android:text="@+id/TextView01" android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/BoundX"></TextView>
+<TextView android:text="@+id/TextView02" android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/BoundY"></TextView>
+<TextView android:text="@+id/TextView03" android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/BoundZ"></TextView>
+</LinearLayout>
