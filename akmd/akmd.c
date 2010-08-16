@@ -26,10 +26,11 @@
  * free akmd.
  */
 
+#include <fcntl.h>
 #include <math.h>
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
 
 #include "akm8973.h"
@@ -41,34 +42,16 @@
 /* Device model specific parameters. Tuned for HTC Hero */
 /* from /data/misc/AKM8973Prms.txt */
 #define TEMPERATURE_ZERO 112
-#define HOFFSET_X -1349
-#define HOFFSET_Y 758
-#define HOFFSET_Z 443
-
-/* DAC settings which must be written to akm chip */
-#define HDAC_X 11  // XXX are these right values???
-#define HDAC_Y 132
-#define HDAC_Z 135
-
-static char initialization[] = {
-   0xe1, HDAC_X,
-   0xe2, HDAC_Y,
-   0xe3, HDAC_Z,
-   0xe4, 4, // XXX is 4 the right gain? Is it same gain for all?
-   0xe5, 4,
-   0xe6, 4,
-   0
-};
 
 static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
 
-static void open_fds()
+static void open_fds(char *params)
 {
     short mode;
     char rwbuf[5];
-    int init = 0;
+    int i;
 
     akm_fd = open(AKM_NAME, O_RDONLY);
     if (akm_fd == -1) {
@@ -81,26 +64,25 @@ static void open_fds()
         _exit(2);
     }
 
-    while (initialization[init] != 0) {
+    for (i = 0; i < 6; i ++) {
         rwbuf[0] = 2;
-        rwbuf[1] = initialization[init];
-        rwbuf[2] = initialization[init+1];
+        rwbuf[1] = 0xe1 + i;
+        rwbuf[2] = params[i];
         if (ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) != 0) {
-            perror("Failed to write reset state");
+            perror("Failed to write gain controls\n");
             _exit(3);
         }
-        init += 2;
     }
 
     bma150_fd = open(BMA150_NAME, O_RDONLY);
     if (bma150_fd == -1) {
         perror("Failed to open " BMA150_NAME);
-        _exit(6);
+        _exit(4);
     }
     mode = BMA_MODE_SLEEP;
     if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
         perror("Failed to put bma150 to sleep initially.");
-        _exit(7);
+        _exit(5);
     }
 }
 
@@ -111,7 +93,7 @@ static state_t readLoop()
     short mode;
 
     struct timespec interval;
-    unsigned char akm_data[5];
+    char akm_data[5];
     short bma150_data[7];
     short final_data[12];
 
@@ -150,6 +132,9 @@ static state_t readLoop()
         perror("bma150: Failed to READ_ACCELERATION");
         _exit(14);
     }
+    short ax = bma150_data[0];
+    short ay = bma150_data[1];
+    short az = bma150_data[2];
 
     /* Absolutely no documentation is available about the result structure.
      * this could be just hardware register dump. */
@@ -157,33 +142,32 @@ static state_t readLoop()
         perror("akm8973: Failed to GETDATA");
         _exit(15);
     }
+    short temperature = (signed char) -(akm_data[1] + TEMPERATURE_ZERO);
+    short mx = 127 - (unsigned char) akm_data[2];
+    short my = 127 - (unsigned char) akm_data[3];
+    short mz = 127 - (unsigned char) akm_data[4];
 
-    final_data[3]  = (signed char) -(akm_data[1] + TEMPERATURE_ZERO); // temperature  -30 .. 85
-    final_data[4]  = 3;           // status of mag. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
-    final_data[5]  = 3;           // status of acc. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
-
-    // 720 = LSG, CONVERT_A = GRAVITY_EARTH/LSG
-    final_data[6]  = bma150_data[0] * 720 / 256;
-    final_data[7]  = bma150_data[1] * 720 / 256;
-    final_data[8]  = bma150_data[2] * 720 / 256;
-
-    // FIXME: AKM 8973 datasheet implies that a good gain setting inside the
-    // chip gives 1 uT as field for 1 LSB value unit. Sadly, it is not
-    // configured like this at all. I am using approximate correction
-    // to give similar values, as I can't work out what the correction
-    // should be.
-    
-    // CONVERT_M = 1/16 = 16 values = 1 uT.
-    final_data[9]  = (127 - akm_data[2]) * 16 + HOFFSET_X; // magnetic X -2048 .. 2032
-    final_data[10] = (127 - akm_data[3]) * 16 + HOFFSET_Y; // magnetic Y -2048 .. 2032
-    final_data[11] = (127 - akm_data[4]) * 16 + HOFFSET_Z; // magnetic Z -2048 .. 2032
-   
     /* yaw */ 
-    final_data[0]  = 180 + (int) (atan2(-final_data[9], final_data[10]) / M_PI * 180);
-    /* calculate pitch and roll directly from acceleration sensor */
-    final_data[1] = -atan2(final_data[7], -final_data[8]) / M_PI * 180;
-    final_data[2] = -acos(final_data[6] / sqrt(final_data[6]*final_data[6] + final_data[7]*final_data[7] + final_data[8]*final_data[8] + 1)) / M_PI * 180 + 90;
+    final_data[0]  = 180.0f + (atan2f(-mx, my) / (float) M_PI * 180.0f);
+    /* pitch */
+    final_data[1] = -atan2f(ay, -az) / (float) M_PI * 180.0f;
+    /* roll */
+    final_data[2] = -acosf(ax / sqrtf(ax * ax + ay * ay + az * az + 1)) / M_PI * 180.0f + 90.0f;
     
+    final_data[3]  = temperature;
+    final_data[4]  = 3; // status of mag. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+    final_data[5]  = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+
+    // Android wants 720 = 1G, Device has 256 = 1G
+    final_data[6]  = (128 + ax * 720) >> 8;
+    final_data[7]  = (128 + ay * 720) >> 8;
+    final_data[8]  = (128 + az * 720) >> 8;
+
+    // CONVERT_M = 1/16 = 16 values = 1 uT.
+    final_data[9]  = mx << 16; // magnetic X -2048 .. 2032
+    final_data[10] = my << 16; // magnetic Y -2048 .. 2032
+    final_data[11] = mz << 16; // magnetic Z -2048 .. 2032
+   
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
         perror("bma150: Failed to SET_YPR={akm data}");
@@ -233,8 +217,29 @@ static state_t sleepLoop()
 int main(int argc, char **argv)
 {
     state_t state = SLEEP;
-    
-    open_fds();
+    char params[6];
+    int i;
+   
+    if (argc != 7) {
+        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz>\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i), where\n");
+        fprintf(stderr, "  h(i) = 0 .. 255\n");
+        fprintf(stderr, "  g(i) = 0 .. 15\n");
+        fprintf(stderr, "  a, b = internal scaling parameters\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Calibration requires establishing measurements in a known field strength\n");
+        fprintf(stderr, "and ensuring that as device is rotated, the average readout is 0,\n");
+        fprintf(stderr, "and maximum value along each axis equals the known strength.\n");
+        fprintf(stderr, "The Earth's magnetic field is about 50 uT.\n");
+        _exit(100);
+    }
+
+    for (i = 0; i < 6; i ++) {
+        params[i] = atoi(argv[1+i]);
+    }
+ 
+    open_fds(params);
     while (1) {
         switch (state) {
         case READ:
