@@ -37,6 +37,12 @@
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
 
+/* device model specific parameters. */
+#define TEMPERATURE_ZERO 112
+#define HOFFSET_X -1349
+#define HOFFSET_Y 758
+#define HOFFSET_Z 443
+
 static int akm_fd, bma150_fd;
 
 static enum { READ, SLEEP } state;
@@ -75,7 +81,7 @@ static void readLoop()
     short mode;
 
     struct timespec interval;
-    signed char akm_data[5];
+    unsigned char akm_data[5];
     short bma150_data[7];
     short final_data[12];
 
@@ -126,7 +132,7 @@ static void readLoop()
     final_data[0]  = 0; // magnetic yaw 0 .. 360
     final_data[1]  = 0; // magnetic pitch -180 .. 180
     final_data[2]  = 0; // magnetic roll -90, 90
-    final_data[3]  = akm_data[3]; // temperature  -30 .. 85
+    final_data[3]  = TEMPERATURE_ZERO - (signed char) akm_data[1]; // temperature  -30 .. 85
     final_data[4]  = 3;           // status of mag. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
     final_data[5]  = 3;           // status of acc. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
 
@@ -135,10 +141,16 @@ static void readLoop()
     final_data[7]  = bma150_data[1] * 720 / 256;
     final_data[8]  = bma150_data[2] * 720 / 256;
 
-    // CONVERT_M = 1/16
-    final_data[9]  = akm_data[0] << 3; // magnetic X -2048 .. 2032
-    final_data[10] = akm_data[1] << 3; // magnetic Y -2048 .. 2032
-    final_data[11] = akm_data[2] << 3; // magnetic Z -2048 .. 2032
+    // FIXME: AKM 8973 datasheet implies that a good gain setting inside the
+    // chip gives 1 uT as field for 1 LSB value unit. Sadly, it is not
+    // configured like this at all. I am using approximate correction
+    // to give similar values, as I can't work out what the correction
+    // should be.
+    
+    // CONVERT_M = 1/16 = 16 values = 1 uT.
+    final_data[9]  = (127 - akm_data[2]) * 16 + HOFFSET_X; // magnetic X -2048 .. 2032
+    final_data[10] = (127 - akm_data[3]) * 16 + HOFFSET_Y; // magnetic Y -2048 .. 2032
+    final_data[11] = (127 - akm_data[4]) * 16 + HOFFSET_Z; // magnetic Z -2048 .. 2032
     
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
