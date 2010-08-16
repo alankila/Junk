@@ -168,7 +168,7 @@ static state_t readLoop(char tz, signed char* digital_adjustment)
     mz += digital_adjustment[2];
     mz = -mz;
 
-#if 0
+#if 1
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
      * o2 points towards magnetic North.
@@ -185,8 +185,8 @@ static state_t readLoop(char tz, signed char* digital_adjustment)
      * is used to establish orthogonal basis in E. */
     float o1[3];
     float o2[3];
-    cross_product(ax, ay, az, 0, -1, 0, o1);
-    cross_product(ax, -ay, az, o1[0], o1[1], o1[2], o2);
+    cross_product(-ax, ay, az, 0, -1, 0, o1);
+    cross_product(-ax, ay, az, o1[0], o1[1], o1[2], o2);
     normalize(o1);
     normalize(o2);
 
