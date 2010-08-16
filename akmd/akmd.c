@@ -45,6 +45,21 @@
 #define HOFFSET_Y 758
 #define HOFFSET_Z 443
 
+/* DAC settings which must be written to akm chip */
+#define HDAC_X 11
+#define HDAC_Y 132
+#define HDAC_Z 135
+
+static char initialization[] = {
+   0xe1, HDAC_X,
+   0xe2, HDAC_Y,
+   0xe3, HDAC_Z,
+   0xe4, 4,
+   0xe5, 4,
+   0xe6, 4,
+   0
+};
+
 static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
@@ -52,7 +67,9 @@ typedef enum { READ, SLEEP } state_t;
 static void open_fds()
 {
     short mode;
- 
+    char rwbuf[5];
+    int init = 0;
+
     akm_fd = open(AKM_NAME, O_RDONLY);
     if (akm_fd == -1) {
         perror("Failed to open " AKM_NAME);
@@ -60,19 +77,30 @@ static void open_fds()
     }
     mode = AKECS_MODE_POWERDOWN;
     if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
-        perror("Failed to put akm8973 to sleep initially.");
+        perror("Failed to put akm8973 to sleep");
         _exit(2);
+    }
+
+    while (initialization[init] != 0) {
+        rwbuf[0] = 2;
+        rwbuf[1] = initialization[init];
+        rwbuf[2] = initialization[init+1];
+        if (ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) != 0) {
+            perror("Failed to write reset state");
+            _exit(3);
+        }
+        init += 2;
     }
 
     bma150_fd = open(BMA150_NAME, O_RDONLY);
     if (bma150_fd == -1) {
         perror("Failed to open " BMA150_NAME);
-        _exit(3);
+        _exit(6);
     }
     mode = BMA_MODE_SLEEP;
     if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
         perror("Failed to put bma150 to sleep initially.");
-        _exit(4);
+        _exit(7);
     }
 }
 
