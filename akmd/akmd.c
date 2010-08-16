@@ -26,6 +26,7 @@
  * free akmd.
  */
 
+#include <math.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -46,7 +47,7 @@
 
 static int akm_fd, bma150_fd;
 
-static enum { READ, SLEEP } state;
+typedef enum { READ, SLEEP } state_t;
 
 static void open_fds()
 {
@@ -75,7 +76,7 @@ static void open_fds()
     }
 }
 
-static void readLoop()
+static state_t readLoop()
 {
     unsigned int status;
     unsigned short delay;
@@ -104,8 +105,7 @@ static void readLoop()
             _exit(12);
         }
 
-        state = SLEEP;
-        return;
+        return SLEEP;
     }
 
     /* Measuring puts readable state to 0. It is going to take
@@ -130,9 +130,6 @@ static void readLoop()
         _exit(15);
     }
 
-    final_data[0]  = 0; // magnetic yaw 0 .. 360
-    final_data[1]  = 0; // magnetic pitch -180 .. 180
-    final_data[2]  = 0; // magnetic roll -90, 90
     final_data[3]  = (signed char) -(akm_data[1] + TEMPERATURE_ZERO); // temperature  -30 .. 85
     final_data[4]  = 3;           // status of mag. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
     final_data[5]  = 3;           // status of acc. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
@@ -153,6 +150,11 @@ static void readLoop()
     final_data[10] = (127 - akm_data[3]) * 16 + HOFFSET_Y; // magnetic Y -2048 .. 2032
     final_data[11] = (127 - akm_data[4]) * 16 + HOFFSET_Z; // magnetic Z -2048 .. 2032
     
+    final_data[0]  = 180 + (int) (atan2(-final_data[9], final_data[10]) / M_PI * 180);
+    /* calculate pitch and roll directly from acceleration sensor */
+    final_data[1] = atan2(-final_data[7], -final_data[8]) / M_PI * 180;
+    final_data[2] = atan2(final_data[6], -final_data[8]) / M_PI * 180;
+    
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
         perror("bma150: Failed to SET_YPR={akm data}");
@@ -168,9 +170,10 @@ static void readLoop()
     interval.tv_sec = delay / 1000;
     interval.tv_nsec = 1000000 * (delay % 1000);
     nanosleep(&interval, NULL);
+    return READ;
 }
 
-void sleepLoop()
+static state_t sleepLoop()
 {
     int status;
     short mode;
@@ -189,27 +192,27 @@ void sleepLoop()
             perror("bma150: Failed to SET_MODE=NORMAL");
             _exit(21);
         }
-        state = READ;
-        return;
+        return READ;
     }
 
     interval.tv_sec = 1;
     interval.tv_nsec = 0;
     nanosleep(&interval, NULL);
+    return SLEEP;
 }
 
 int main(int argc, char **argv)
 {
-    state = SLEEP;
+    state_t state = SLEEP;
     
     open_fds();
     while (1) {
         switch (state) {
         case READ:
-            readLoop();
+            state = readLoop();
             break;
         case SLEEP:
-            sleepLoop();
+            state = sleepLoop();
             break;
         }
     }
