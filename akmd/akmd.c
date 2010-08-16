@@ -82,6 +82,26 @@ static void open_fds(char *params)
     }
 }
 
+static void cross_product(float ax, float ay, float az, float bx, float by, float bz, float *v)
+{
+    v[0] = ay * bz - az * by;
+    v[1] = az * bx - ax * bz;
+    v[2] = ax * by - ay * bx;
+}
+
+static void normalize(float *v)
+{
+    float norm = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + 1);
+    v[0] /= norm;
+    v[1] /= norm;
+    v[2] /= norm;
+}
+
+static float dot(float ax, float ay, float az, float bx, float by, float bz)
+{
+    return ax * bx + ay * by + az * bz;
+}
+
 static state_t readLoop(char tz)
 {
     unsigned int status;
@@ -142,9 +162,36 @@ static state_t readLoop(char tz)
     short mx = 127 - (unsigned char) akm_data[2];
     short my = 127 - (unsigned char) akm_data[3];
     short mz = 127 - (unsigned char) akm_data[4];
+    mx = -mx;
+    mz = -mz;
 
-    /* yaw */ 
-    final_data[0]  = 180.0f + (atan2f(-mx, my) / (float) M_PI * 180.0f);
+    /*
+     * I define yaw in the tangent plane E of the Earth, where direction
+     * 0 points towards magnetic North.
+     *
+     * The device reports an acceleration vector a, which I take to be the
+     * normal that defines the tangent space.
+     *
+     * The device also reports magnetic vector m, which needs to be projected
+     * to the tangent space, and then the angle of that vector is to be
+     * measured within the tangent space.
+     */
+
+    /* From a, we need to discover 2 suitable vectors. Cross product
+     * is used to establish orthogonal basis in E. */
+    float o1[3];
+    float o2[3];
+    cross_product(ax, ay, az, 0, -1, 0, o1);
+    cross_product(ax, ay, az, o1[0], o1[1], o1[2], o2);
+    normalize(o1);
+    normalize(o2);
+
+    /* Now project magnetic field on components o1 and o2. */
+    int o1l = dot(mx, my, mz, o1[0], o1[1], o1[2]);
+    int o2l = dot(mx, my, mz, o2[0], o2[1], o2[2]);
+
+    /* Establish the angle in E */
+    final_data[0]  = 180.0f + (atan2f(-o1l, o2l) / (float) M_PI * 180.0f);
     /* pitch */
     final_data[1] = -atan2f(ay, -az) / (float) M_PI * 180.0f;
     /* roll */
