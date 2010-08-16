@@ -60,14 +60,13 @@ public class MagneticFlux extends Activity {
 			boundY.setText(String.format("Y: %+3d - %+3d uT, center %+3d", minY, maxY, (minY + maxY) / 2));
 			boundZ.setText(String.format("Z: %+3d - %+3d uT, center %+3d", minZ, maxZ, (minZ + maxZ) / 2));
 		}
-		
 	};
 	
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
-        
+      
         sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         xy = (MagneticSurface) findViewById(R.id.XY);
         xz = (MagneticSurface) findViewById(R.id.XZ);
@@ -100,19 +99,21 @@ public class MagneticFlux extends Activity {
 				maxZ = 0;
 				
 		    	Sensor sensor = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
-		        sm.registerListener(sensorListener, sensor, SensorManager.SENSOR_DELAY_UI);
+		        sm.registerListener(sensorListener, sensor, SensorManager.SENSOR_DELAY_GAME);
 			}
         });
-    }
+
+    	xy.reset();
+    	xz.reset();
+    	yz.reset();
+    }	
     
     @Override
     protected void onResume() {
     	super.onResume();
+
     	Sensor sensor = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
         sm.registerListener(sensorListener, sensor, SensorManager.SENSOR_DELAY_UI);
-        xy.reset();
-        xz.reset();
-        yz.reset();
     }
     
     @Override
@@ -120,4 +121,25 @@ public class MagneticFlux extends Activity {
     	super.onStop();
     	sm.unregisterListener(sensorListener);
     }
+    
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+    	super.onSaveInstanceState(outState);
+    	outState.putInt("minX", minX);
+    	outState.putInt("maxX", maxX);
+    	outState.putInt("minY", minY);
+    	outState.putInt("minY", maxY);
+    	outState.putInt("minZ", minZ);
+    	outState.putInt("minZ", maxZ);
+    }
+    
+	@Override
+	protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        minX = savedInstanceState.getInt("minX", 0);
+        maxX = savedInstanceState.getInt("maxX", 0);
+        minY = savedInstanceState.getInt("minY", 0);
+        maxY = savedInstanceState.getInt("maxY", 0);        
+        minZ = savedInstanceState.getInt("minZ", 0);
+        maxZ = savedInstanceState.getInt("maxZ", 0);
+	}
 }

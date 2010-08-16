@@ -1,29 +1,19 @@
 /*
- * Theory of operation:
+ * Free, open-source replacement of the closed source akmd driver written
+ * by AKM. This program is the user-space counterpart of akm8973 and bma150
+ * sensors found on various Android phones.
  *
- * Init:
- * 1. open akm8973_daemon, bma150
+ * Copyright Antti S. Lankila, 2010, licensed under the Apache License.
  *
- * Mainloop:
- * 2. 8973: call GET_OPEN_STATUS to work out if we need to do anything
- *    if not, put akm8973 to powerdown state, goto 11
- * 3. 8973: call SET_MODE with READ parameter
- * 4. 8973: GETDATA, get datastruct
- * 5. bma150: READ_ACCELERATION
- * 6. Fill in bma150's acceleration data into 8973's datastruct
- * 7. 8973: SET_YPR with datastruct
- * 8. 8973: GET_DELAY to get delay value
- * 9. sleep(delay value)
- * 10. goto 2
+ * The driver does not use akm8973's acceleration data. Instead, it
+ * queries the bma150 sensor and reports its data instead.
  *
- * Sleep:
- * 11. sleep 1s.
- * 12. GET_OPEN_STATUS. If still closed, goto 11
- * 13. goto 3.
- *
- * Classic akmd is probably processing the returned data in some way
- * I'm just going to hand back the raw data in the first attempt to make
- * free akmd.
+ * The ioctl to read data from is called akm8973_daemon. The control
+ * device node is akm8973_aot. The libsensors from android talks to
+ * akm8973_aot. The akm8973_daemon samples the chip data and performs
+ * the analysis. The measurement is inherently a slow process, and therefore
+ * cached copy of results is periodically updated to the /dev/input node
+ * called "compass" using an ioctl on the akm8973_daemon.
  */
 
 #include <fcntl.h>
@@ -42,6 +32,10 @@
 static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
+
+static void establish_magnetic_correction(int *m, int *digital_adjustment)
+{
+}
 
 static void open_fds(char *params)
 {
@@ -82,27 +76,29 @@ static void open_fds(char *params)
     }
 }
 
-static void cross_product(float ax, float ay, float az, float bx, float by, float bz, float *v)
+static void cross_product(int *a, float *b, float *c)
 {
-    v[0] = ay * bz - az * by;
-    v[1] = az * bx - ax * bz;
-    v[2] = ax * by - ay * bx;
+    c[0] = a[1] * b[2] - a[2] * b[1];
+    c[1] = a[2] * b[0] - a[0] * b[2];
+    c[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-static void normalize(float *v)
+static float dot(int *a, float *b)
 {
-    float norm = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + 1);
-    v[0] /= norm;
-    v[1] /= norm;
-    v[2] /= norm;
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 }
 
-static float dot(float ax, float ay, float az, float bx, float by, float bz)
+static float length_f(float *a)
 {
-    return ax * bx + ay * by + az * bz;
+    return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
 }
 
-static state_t readLoop(char tz, signed char* digital_adjustment)
+static float length_i(int *a)
+{
+    return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+}
+
+static state_t readLoop(char tz, int *digital_adjustment)
 {
     unsigned int status;
     unsigned short delay;
@@ -142,33 +138,32 @@ static state_t readLoop(char tz, signed char* digital_adjustment)
         _exit(13);
     }
 
-    /* Significance and range of values can be extracted from
-     * bma150.c. */
+    /* Significance and range of values can be extracted from bma150.c. */
     if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
         perror("bma150: Failed to READ_ACCELERATION");
         _exit(14);
     }
-    short ax = bma150_data[0];
-    short ay = bma150_data[1];
-    short az = bma150_data[2];
+    int a[] = { bma150_data[0], bma150_data[1], bma150_data[2] };
 
-    /* Absolutely no documentation is available about the result structure.
-     * this could be just hardware register dump. */
+    /* Significance and range of values can be extracted from
+     * online AKM 8973 manual. The kernel driver is dumb. */
     if (ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) != 0) {
         perror("akm8973: Failed to GETDATA");
         _exit(15);
     }
     short temperature = (signed char) -(akm_data[1] + tz);
-    short mx = 127 - (unsigned char) akm_data[2];
-    short my = 127 - (unsigned char) akm_data[3];
-    short mz = 127 - (unsigned char) akm_data[4];
-    
-    mx += digital_adjustment[0];
-    my += digital_adjustment[1];
-    mz += digital_adjustment[2];
-    mz = -mz;
+    int m[] = { 127 - (unsigned char) akm_data[2],
+                127 - (unsigned char) akm_data[3],
+                127 - (unsigned char) akm_data[4] };
+   
+    establish_magnetic_correction(m, digital_adjustment);
+ 
+    m[0] -= digital_adjustment[0];
+    m[1] += digital_adjustment[1];
+    m[2] -= digital_adjustment[2];
+    m[0] = -m[0];
+    m[2] = -m[2];
 
-#if 1
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
      * o2 points towards magnetic North.
@@ -185,39 +180,39 @@ static state_t readLoop(char tz, signed char* digital_adjustment)
      * is used to establish orthogonal basis in E. */
     float o1[3];
     float o2[3];
-    cross_product(-ax, ay, az, 0, -1, 0, o1);
-    cross_product(-ax, ay, az, o1[0], o1[1], o1[2], o2);
-    normalize(o1);
-    normalize(o2);
-
+    float ref[3] = { 0, -1, 0 };
+    /* a = 9 bits, o1 = 9 bits */
+    cross_product(a, ref, o1);
+    /* o2 = 18 bits */
+    cross_product(a, o1, o2);
+    
     /* Now project magnetic field on components o1 and o2. */
-    int o1l = dot(mx, my, mz, o1[0], o1[1], o1[2]);
-    int o2l = dot(mx, my, mz, o2[0], o2[1], o2[2]);
+    /* m = 9 bits, o1 = 9 bits result 18 bits */
+    float o1l = dot(m, o1) * length_f(o2);
+    /* m = 9 bits, o2 = 18 bits result 27 bits */
+    float o2l = dot(m, o2) * length_f(o1);
 
     /* Establish the angle in E */
-    final_data[0]  = 180.0f + atan2f(o1l, o2l) / (float) M_PI * 180.0f;
-#else
-    final_data[0] = 180.0f + atan2(-mx, my) / (float) M_PI * 180.0f;
-#endif
-
+    final_data[0] = 180.0f - atan2f(o1l, o2l) / (float) M_PI * 180.0f;
     /* pitch */
-    final_data[1] = -atan2f(ay, -az) / (float) M_PI * 180.0f;
+    final_data[1] = -atan2f(a[1], -a[2]) / (float) M_PI * 180.0f;
     /* roll */
-    final_data[2] = -acosf(ax / sqrtf(ax * ax + ay * ay + az * az + 1)) / M_PI * 180.0f + 90.0f;
+    final_data[2] = -acosf(a[0] / length_i(a)) / M_PI * 180.0f + 90.0f;
     
-    final_data[3]  = temperature;
-    final_data[4]  = 3; // status of mag. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
-    final_data[5]  = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+    final_data[3] = temperature;
+    /* FIXME: how to establish accuracy? */
+    final_data[4] = 3; // status of mag. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+    final_data[5] = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
 
     // Android wants 720 = 1G, Device has 256 = 1G
-    final_data[6]  = (128 + ax * 720) >> 8;
-    final_data[7]  = (128 + az * 720) >> 8;
-    final_data[8]  = (128 + ay * 720) >> 8;
+    final_data[6] = (128 + a[0] * 720) >> 8;
+    final_data[7] = (128 + a[2] * 720) >> 8;
+    final_data[8] = (128 + a[1] * 720) >> 8;
 
     // CONVERT_M = 1/16 = 16 values = 1 uT.
-    final_data[9]  = mx << 4;
-    final_data[10] = my << 4;
-    final_data[11] = mz << 4;
+    final_data[9]  = m[0] << 4;
+    final_data[10] = m[1] << 4;
+    final_data[11] = m[2] << 4;
    
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
@@ -231,6 +226,9 @@ static state_t readLoop(char tz, signed char* digital_adjustment)
         _exit(17);
     }
 
+    /* We could actually use gettimeofday when we start to
+     * achieve truly periodic timer tick. Right now we really
+     * sleep for interval + processing time. */
     interval.tv_sec = delay / 1000;
     interval.tv_nsec = 1000000 * (delay % 1000);
     nanosleep(&interval, NULL);
@@ -269,7 +267,7 @@ int main(int argc, char **argv)
 {
     state_t state = SLEEP;
     char params[6];
-    signed char digital_adjustment[3];
+    int digital_adjustment[3];
     char tz;
     int i;
    
