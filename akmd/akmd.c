@@ -39,10 +39,6 @@
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
 
-/* Device model specific parameters. Tuned for HTC Hero */
-/* from /data/misc/AKM8973Prms.txt */
-#define TEMPERATURE_ZERO 112
-
 static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
@@ -86,7 +82,7 @@ static void open_fds(char *params)
     }
 }
 
-static state_t readLoop()
+static state_t readLoop(char tz, int *digital_correction)
 {
     unsigned int status;
     unsigned short delay;
@@ -142,7 +138,7 @@ static state_t readLoop()
         perror("akm8973: Failed to GETDATA");
         _exit(15);
     }
-    short temperature = (signed char) -(akm_data[1] + TEMPERATURE_ZERO);
+    short temperature = (signed char) -(akm_data[1] + tz);
     short mx = 127 - (unsigned char) akm_data[2];
     short my = 127 - (unsigned char) akm_data[3];
     short mz = 127 - (unsigned char) akm_data[4];
@@ -164,9 +160,9 @@ static state_t readLoop()
     final_data[8]  = (128 + az * 720) >> 8;
 
     // CONVERT_M = 1/16 = 16 values = 1 uT.
-    final_data[9]  = mx << 16; // magnetic X -2048 .. 2032
-    final_data[10] = my << 16; // magnetic Y -2048 .. 2032
-    final_data[11] = mz << 16; // magnetic Z -2048 .. 2032
+    final_data[9]  = (mx << 4) + digital_correction[0];
+    final_data[10] = (my << 4) + digital_correction[1];
+    final_data[11] = (mz << 4) + digital_correction[2];
    
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
@@ -176,7 +172,7 @@ static state_t readLoop()
 
     /* Get time until next update. */
     if (ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) != 0) {
-        perror("akm8973: Failed to GET_DELAY");
+         perror("akm8973: Failed to GET_DELAY");
         _exit(17);
     }
 
@@ -218,32 +214,46 @@ int main(int argc, char **argv)
 {
     state_t state = SLEEP;
     char params[6];
+    int  digital_correction[3];
+    char tz;
     int i;
    
-    if (argc != 7) {
-        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz>\n");
+    if (argc != 11) {
+        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <dx> <dy> <dz> <tz>\n");
         fprintf(stderr, "\n");
-        fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i), where\n");
+        fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i) + d(i), where\n");
         fprintf(stderr, "  h(i) = 0 .. 255\n");
         fprintf(stderr, "  g(i) = 0 .. 15\n");
+        fprintf(stderr, "  d(i) = digital correction (32-bit int)\n");
         fprintf(stderr, "  a, b = internal scaling parameters\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Calibration requires establishing measurements in a known field strength\n");
         fprintf(stderr, "and ensuring that as device is rotated, the average readout is 0,\n");
         fprintf(stderr, "and maximum value along each axis equals the known strength.\n");
         fprintf(stderr, "The Earth's magnetic field is about 50 uT.\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "tz is the temperature zero reference value.");
         _exit(100);
     }
 
+    /* args 1 .. 6 */
     for (i = 0; i < 6; i ++) {
         params[i] = atoi(argv[1+i]);
+        fprintf(stderr, "analog correction %d = %d\n", i, params[i]);
     }
+    /* params 7 .. 9 */
+    for (i = 0; i < 3; i ++) {
+        digital_correction[i] = atoi(argv[7+i]);
+        fprintf(stderr, "digital correction %d = %d\n", i, digital_correction[i]);
+    }
+    tz = atoi(argv[10]);
+    fprintf(stderr, "temperature correction %d\n", tz);
  
     open_fds(params);
     while (1) {
         switch (state) {
         case READ:
-            state = readLoop();
+            state = readLoop(tz, digital_correction);
             break;
         case SLEEP:
             state = sleepLoop();
