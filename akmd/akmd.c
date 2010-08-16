@@ -102,7 +102,7 @@ static float dot(float ax, float ay, float az, float bx, float by, float bz)
     return ax * bx + ay * by + az * bz;
 }
 
-static state_t readLoop(char tz)
+static state_t readLoop(char tz, signed char* digital_adjustment)
 {
     unsigned int status;
     unsigned short delay;
@@ -162,12 +162,16 @@ static state_t readLoop(char tz)
     short mx = 127 - (unsigned char) akm_data[2];
     short my = 127 - (unsigned char) akm_data[3];
     short mz = 127 - (unsigned char) akm_data[4];
-    mx = -mx;
+    
+    mx += digital_adjustment[0];
+    my += digital_adjustment[1];
+    mz += digital_adjustment[2];
     mz = -mz;
 
+#if 0
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
-     * 0 points towards magnetic North.
+     * o2 points towards magnetic North.
      *
      * The device reports an acceleration vector a, which I take to be the
      * normal that defines the tangent space.
@@ -182,7 +186,7 @@ static state_t readLoop(char tz)
     float o1[3];
     float o2[3];
     cross_product(ax, ay, az, 0, -1, 0, o1);
-    cross_product(ax, ay, az, o1[0], o1[1], o1[2], o2);
+    cross_product(ax, -ay, az, o1[0], o1[1], o1[2], o2);
     normalize(o1);
     normalize(o2);
 
@@ -191,7 +195,11 @@ static state_t readLoop(char tz)
     int o2l = dot(mx, my, mz, o2[0], o2[1], o2[2]);
 
     /* Establish the angle in E */
-    final_data[0]  = 180.0f + (atan2f(-o1l, o2l) / (float) M_PI * 180.0f);
+    final_data[0]  = 180.0f + atan2f(o1l, o2l) / (float) M_PI * 180.0f;
+#else
+    final_data[0] = 180.0f + atan2(-mx, my) / (float) M_PI * 180.0f;
+#endif
+
     /* pitch */
     final_data[1] = -atan2f(ay, -az) / (float) M_PI * 180.0f;
     /* roll */
@@ -261,16 +269,17 @@ int main(int argc, char **argv)
 {
     state_t state = SLEEP;
     char params[6];
+    signed char digital_adjustment[3];
     char tz;
     int i;
    
-    if (argc != 8) {
-        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <tz>\n");
+    if (argc != 11) {
+        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <dx> <dy> <dz> <tz>\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i) + d(i), where\n");
         fprintf(stderr, "  h(i) = -128 .. 127\n");
         fprintf(stderr, "  g(i) = 0 .. 15\n");
-        fprintf(stderr, "  d(i) = digital correction (32-bit int)\n");
+        fprintf(stderr, "  d(i) = -128 .. 127\n");
         fprintf(stderr, "  a, b = internal scaling parameters\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Calibration requires establishing measurements in a known field strength\n");
@@ -282,7 +291,7 @@ int main(int argc, char **argv)
         _exit(100);
     }
 
-    /* args 1 .. 3 */
+    /* args 1 .. 3, 4 .. 6 */
     for (i = 0; i < 3; i ++) {
         /* AKM specification says that values 0 .. 127 are monotonously
          * decreasing corrections, and values 128 .. 255 are
@@ -294,18 +303,19 @@ int main(int argc, char **argv)
         }
         /* now straightened so that -128 .. 127 can be used, center at 0 */
         params[i] = corr;
-    }
-    /* params 4 .. 6 */
-    for (i = 0; i < 3; i ++) {
         params[3+i] = atoi(argv[4+i]);
     }
-    tz = atoi(argv[7]);
+    /* params 7 .. 9 */
+    for (i = 0; i < 3; i ++) {
+        digital_adjustment[i] = atoi(argv[7+i]);
+    }
+    tz = atoi(argv[10]);
  
     open_fds(params);
     while (1) {
         switch (state) {
         case READ:
-            state = readLoop(tz);
+            state = readLoop(tz, digital_adjustment);
             break;
         case SLEEP:
             state = sleepLoop();

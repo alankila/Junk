@@ -2,9 +2,11 @@
 
 # 1st: analog offsets 0 .. 255
 # 2nd: analog gain 0 .. 15
-# 3rd: 0C reference value 0 .. 255
+# 3rd: digital correction -128 .. 127
+# 4th: 0C reference value 0 .. 255
 
-exec akmd.free  \
-       7    -2    -4 \
-       4     3     1 \
+exec akmd.free \
+       6    -2    -4 \
+       4     3     3 \
+       9    -2     6 \
      112
