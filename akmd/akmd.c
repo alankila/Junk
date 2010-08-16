@@ -37,7 +37,8 @@
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
 
-/* device model specific parameters. */
+/* Device model specific parameters. Tuned for HTC Hero */
+/* from /data/misc/AKM8973Prms.txt */
 #define TEMPERATURE_ZERO 112
 #define HOFFSET_X -1349
 #define HOFFSET_Y 758
@@ -132,7 +133,7 @@ static void readLoop()
     final_data[0]  = 0; // magnetic yaw 0 .. 360
     final_data[1]  = 0; // magnetic pitch -180 .. 180
     final_data[2]  = 0; // magnetic roll -90, 90
-    final_data[3]  = TEMPERATURE_ZERO - (signed char) akm_data[1]; // temperature  -30 .. 85
+    final_data[3]  = (signed char) -(akm_data[1] + TEMPERATURE_ZERO); // temperature  -30 .. 85
     final_data[4]  = 3;           // status of mag. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
     final_data[5]  = 3;           // status of acc. sensor -32768 .. 3 (UNRELIABLE, LOW, MEDIUM, HIGH)
 
