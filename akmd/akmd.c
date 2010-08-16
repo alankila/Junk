@@ -211,8 +211,8 @@ static state_t readLoop(char tz, signed char* digital_adjustment)
 
     // Android wants 720 = 1G, Device has 256 = 1G
     final_data[6]  = (128 + ax * 720) >> 8;
-    final_data[7]  = (128 + ay * 720) >> 8;
-    final_data[8]  = (128 + az * 720) >> 8;
+    final_data[7]  = (128 + az * 720) >> 8;
+    final_data[8]  = (128 + ay * 720) >> 8;
 
     // CONVERT_M = 1/16 = 16 values = 1 uT.
     final_data[9]  = mx << 4;
