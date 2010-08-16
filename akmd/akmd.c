@@ -46,7 +46,7 @@
 #define HOFFSET_Z 443
 
 /* DAC settings which must be written to akm chip */
-#define HDAC_X 11
+#define HDAC_X 11  // XXX are these right values???
 #define HDAC_Y 132
 #define HDAC_Z 135
 
@@ -54,7 +54,7 @@ static char initialization[] = {
    0xe1, HDAC_X,
    0xe2, HDAC_Y,
    0xe3, HDAC_Z,
-   0xe4, 4,
+   0xe4, 4, // XXX is 4 the right gain? Is it same gain for all?
    0xe5, 4,
    0xe6, 4,
    0
@@ -177,8 +177,6 @@ static state_t readLoop()
     final_data[9]  = (127 - akm_data[2]) * 16 + HOFFSET_X; // magnetic X -2048 .. 2032
     final_data[10] = (127 - akm_data[3]) * 16 + HOFFSET_Y; // magnetic Y -2048 .. 2032
     final_data[11] = (127 - akm_data[4]) * 16 + HOFFSET_Z; // magnetic Z -2048 .. 2032
-    // z inverted
-    final_data[11] = -final_data[11];
    
     /* yaw */ 
     final_data[0]  = 180 + (int) (atan2(-final_data[9], final_data[10]) / M_PI * 180);
