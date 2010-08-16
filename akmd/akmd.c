@@ -14,14 +14,47 @@
  * the analysis. The measurement is inherently a slow process, and therefore
  * cached copy of results is periodically updated to the /dev/input node
  * called "compass" using an ioctl on the akm8973_daemon.
+ *
+ * Here are some definitions of various orientations:
+ *
+ * If device is lying on its back on table:
+ * x = the short edge of device, increasing towards right
+ * y = the long endge of device, increasing towards top
+ * z = the direction of sky, increasing towards sky
+ *
+ * Yaw (Azimuth): 0 points towards North, 90 to East, 180 to South, 270 to West
+ * Pitch: rotation around X axis, with positive values when z axis moves
+ * towards y axis ("down")
+ * Roll: rotation around Y axis, with positive values when z axis moves
+ * towards x axis ("right")
+ *
+ * libsensors flips the sign of Roll, acceleration A, acceleration Z,
+ * magnetic field X, magnetic field Y.
+ *
+ * BMA150 reports acceleration like this:
+ *
+ * gravity vector z is negative when device lays flat on table.
+ * when raised up into portrait orientation, y is positive.
+ * when laying on the left edge, x is negative.
+ *
+ * Therefore BMA's y differs from the others, as y is incrementing
+ * down the phone's edge rather than towards top.
+ *
+ * Magnetic sensor orientation has axis according to device coordinate system:
+ * x decrements when approaching from direction of positive x (left)
+ * y decrements when approaching from direction of positive y (keyboard)
+ * z decrements when approaching from direction of positive z (below)
+ * (I just tested with a magnetized screwdriver; it is possible that
+ *  all axes are consistently flipped.)
  */
-
 #include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include <utils/Log.h>
 
 #include "akm8973.h"
 #include "bma150.h"
@@ -143,7 +176,7 @@ static state_t readLoop(char tz, int *digital_adjustment)
         perror("bma150: Failed to READ_ACCELERATION");
         _exit(14);
     }
-    int a[] = { bma150_data[0], bma150_data[1], bma150_data[2] };
+    int a[] = { bma150_data[0], -bma150_data[1], bma150_data[2] };
 
     /* Significance and range of values can be extracted from
      * online AKM 8973 manual. The kernel driver is dumb. */
@@ -155,14 +188,14 @@ static state_t readLoop(char tz, int *digital_adjustment)
     int m[] = { 127 - (unsigned char) akm_data[2],
                 127 - (unsigned char) akm_data[3],
                 127 - (unsigned char) akm_data[4] };
-   
+  
+    //LOGI("a=(%d %d %d), m=(%d %d %d)", a[0], a[1], a[2], m[0], m[1], m[2]);
+
     establish_magnetic_correction(m, digital_adjustment);
  
-    m[0] -= digital_adjustment[0];
+    m[0] += digital_adjustment[0];
     m[1] += digital_adjustment[1];
-    m[2] -= digital_adjustment[2];
-    m[0] = -m[0];
-    m[2] = -m[2];
+    m[2] += digital_adjustment[2];
 
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
@@ -193,21 +226,21 @@ static state_t readLoop(char tz, int *digital_adjustment)
     float o2l = dot(m, o2) * length_f(o1);
 
     /* Establish the angle in E */
-    final_data[0] = 180.0f - atan2f(o1l, o2l) / (float) M_PI * 180.0f;
+    final_data[0] = 180.0f + atan2f(o1l, o2l) / (float) M_PI * 180.0f;
     /* pitch */
-    final_data[1] = -atan2f(a[1], -a[2]) / (float) M_PI * 180.0f;
+    final_data[1] = atan2f(a[1], -a[2]) / (float) M_PI * 180.0f;
     /* roll */
-    final_data[2] = -acosf(a[0] / length_i(a)) / M_PI * 180.0f + 90.0f;
+    final_data[2] = 90.0f - acosf(a[0] / length_i(a)) / M_PI * 180.0f;
     
     final_data[3] = temperature;
     /* FIXME: how to establish accuracy? */
     final_data[4] = 3; // status of mag. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
     final_data[5] = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
 
-    // Android wants 720 = 1G, Device has 256 = 1G
+    // Android wants 720 = 1G, Device has 256 = 1G. */
     final_data[6] = (128 + a[0] * 720) >> 8;
     final_data[7] = (128 + a[2] * 720) >> 8;
-    final_data[8] = (128 + a[1] * 720) >> 8;
+    final_data[8] = (128 + a[1] * -720) >> 8;
 
     // CONVERT_M = 1/16 = 16 values = 1 uT.
     final_data[9]  = m[0] << 4;
@@ -229,6 +262,7 @@ static state_t readLoop(char tz, int *digital_adjustment)
     /* We could actually use gettimeofday when we start to
      * achieve truly periodic timer tick. Right now we really
      * sleep for interval + processing time. */
+    //delay = 500;
     interval.tv_sec = delay / 1000;
     interval.tv_nsec = 1000000 * (delay % 1000);
     nanosleep(&interval, NULL);
