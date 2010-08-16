@@ -243,9 +243,9 @@ static state_t readLoop(char tz, int *digital_adjustment)
     final_data[8] = (128 + a[1] * -720) >> 8;
 
     // CONVERT_M = 1/16 = 16 values = 1 uT.
-    final_data[9]  = m[0] << 4;
-    final_data[10] = m[1] << 4;
-    final_data[11] = m[2] << 4;
+    final_data[9]  =  m[0] << 4;
+    final_data[10] =  m[1] << 4;
+    final_data[11] = -m[2] << 4;
    
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
