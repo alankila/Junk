@@ -82,7 +82,7 @@ static void open_fds(char *params)
     }
 }
 
-static state_t readLoop(char tz, int *digital_correction)
+static state_t readLoop(char tz)
 {
     unsigned int status;
     unsigned short delay;
@@ -160,9 +160,9 @@ static state_t readLoop(char tz, int *digital_correction)
     final_data[8]  = (128 + az * 720) >> 8;
 
     // CONVERT_M = 1/16 = 16 values = 1 uT.
-    final_data[9]  = (mx << 4) + digital_correction[0];
-    final_data[10] = (my << 4) + digital_correction[1];
-    final_data[11] = (mz << 4) + digital_correction[2];
+    final_data[9]  = mx << 4;
+    final_data[10] = my << 4;
+    final_data[11] = mz << 4;
    
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
@@ -214,15 +214,14 @@ int main(int argc, char **argv)
 {
     state_t state = SLEEP;
     char params[6];
-    int  digital_correction[3];
     char tz;
     int i;
    
-    if (argc != 11) {
-        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <dx> <dy> <dz> <tz>\n");
+    if (argc != 8) {
+        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <tz>\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i) + d(i), where\n");
-        fprintf(stderr, "  h(i) = 0 .. 255\n");
+        fprintf(stderr, "  h(i) = -128 .. 127\n");
         fprintf(stderr, "  g(i) = 0 .. 15\n");
         fprintf(stderr, "  d(i) = digital correction (32-bit int)\n");
         fprintf(stderr, "  a, b = internal scaling parameters\n");
@@ -236,24 +235,30 @@ int main(int argc, char **argv)
         _exit(100);
     }
 
-    /* args 1 .. 6 */
-    for (i = 0; i < 6; i ++) {
-        params[i] = atoi(argv[1+i]);
-        fprintf(stderr, "analog correction %d = %d\n", i, params[i]);
-    }
-    /* params 7 .. 9 */
+    /* args 1 .. 3 */
     for (i = 0; i < 3; i ++) {
-        digital_correction[i] = atoi(argv[7+i]);
-        fprintf(stderr, "digital correction %d = %d\n", i, digital_correction[i]);
+        /* AKM specification says that values 0 .. 127 are monotonously
+         * decreasing corrections, and values 128 .. 255 are
+         * monotonously increasing positive corrections and that 0 and 128
+         * are near each other. */
+        int corr = atoi(argv[1+i]);
+        if (corr < 0) {
+            corr = 127 - corr;
+        }
+        /* now straightened so that -128 .. 127 can be used, center at 0 */
+        params[i] = corr;
     }
-    tz = atoi(argv[10]);
-    fprintf(stderr, "temperature correction %d\n", tz);
+    /* params 4 .. 6 */
+    for (i = 0; i < 3; i ++) {
+        params[3+i] = atoi(argv[4+i]);
+    }
+    tz = atoi(argv[7]);
  
     open_fds(params);
     while (1) {
         switch (state) {
         case READ:
-            state = readLoop(tz, digital_correction);
+            state = readLoop(tz);
             break;
         case SLEEP:
             state = sleepLoop();
