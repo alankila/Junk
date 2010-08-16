@@ -149,11 +149,14 @@ static state_t readLoop()
     final_data[9]  = (127 - akm_data[2]) * 16 + HOFFSET_X; // magnetic X -2048 .. 2032
     final_data[10] = (127 - akm_data[3]) * 16 + HOFFSET_Y; // magnetic Y -2048 .. 2032
     final_data[11] = (127 - akm_data[4]) * 16 + HOFFSET_Z; // magnetic Z -2048 .. 2032
-    
+    // z inverted
+    final_data[11] = -final_data[11];
+   
+    /* yaw */ 
     final_data[0]  = 180 + (int) (atan2(-final_data[9], final_data[10]) / M_PI * 180);
     /* calculate pitch and roll directly from acceleration sensor */
-    final_data[1] = atan2(-final_data[7], -final_data[8]) / M_PI * 180;
-    final_data[2] = atan2(final_data[6], -final_data[8]) / M_PI * 180;
+    final_data[1] = -atan2(final_data[7], -final_data[8]) / M_PI * 180;
+    final_data[2] = -acos(final_data[6] / sqrt(final_data[6]*final_data[6] + final_data[7]*final_data[7] + final_data[8]*final_data[8] + 1)) / M_PI * 180 + 90;
     
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
