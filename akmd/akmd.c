@@ -66,8 +66,49 @@ static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
 
-static void establish_magnetic_correction(int *m, int *digital_adjustment)
+#define CALIBRATE_DECAY_SPEED 6
+#define CALIBRATE_MAX_VALUE (2048 << CALIBRATE_DECAY_SPEED)
+static int calibrate_min[3] = {  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE };
+static int calibrate_max[3] = { -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE };
+
+/* Establish the min-max bounds for every measurement seen so far with
+ * decay function. */
+static void calibrate(int *m)
 {
+    int i;
+
+    for (i = 0; i < 3; i ++) {
+        int val = m[i] << CALIBRATE_DECAY_SPEED;
+        /* minimum value seen */
+        if (calibrate_min[i] > val) {
+            calibrate_min[i] = val;
+        }
+        /* maximum value seen */
+        if (calibrate_max[i] < val) {
+            calibrate_max[i] = val;
+        }
+        /* gradually move the minimum towards the positive infinity.
+         * This allows us to recover from spikes like nearby magnetic
+         * objects. */
+        if (calibrate_min[i] < CALIBRATE_MAX_VALUE) {
+            calibrate_min[i] += 1;
+        }
+        /* gradually move the maximum towards the negative infinity */
+        if (calibrate_max[i] > -CALIBRATE_MAX_VALUE) {
+            calibrate_max[i] -= 1;
+        }
+
+        /* Apply current estimate of the midpoint correction adjustment. */
+        int correction = (calibrate_max[i] + calibrate_min[i]) >> (CALIBRATE_DECAY_SPEED + 1);
+        m[i] -= correction;
+    }
+
+    /* We should also estimate the analog gain from examining the value
+     * range in x, y and z directions, and assume that the magnetic field
+     * being measured is the Earth's magnetic field and try to adjust
+     * gain such that it gives 45. This could be seen to be cheating.
+     * The alternative is to force ROM vendors to supply reasonable gain
+     * values. */
 }
 
 static void open_fds(char *params)
@@ -131,7 +172,7 @@ static float length_i(int *a)
     return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
 }
 
-static state_t readLoop(char tz, int *digital_adjustment)
+static state_t readLoop(char tz)
 {
     unsigned int status;
     unsigned short delay;
@@ -190,13 +231,9 @@ static state_t readLoop(char tz, int *digital_adjustment)
                 127 - (unsigned char) akm_data[4] };
   
     //LOGI("a=(%d %d %d), m=(%d %d %d)", a[0], a[1], a[2], m[0], m[1], m[2]);
-
-    establish_magnetic_correction(m, digital_adjustment);
+    
+    calibrate(m);
  
-    m[0] += digital_adjustment[0];
-    m[1] += digital_adjustment[1];
-    m[2] += digital_adjustment[2];
-
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
      * o2 points towards magnetic North.
@@ -301,25 +338,21 @@ int main(int argc, char **argv)
 {
     state_t state = SLEEP;
     char params[6];
-    int digital_adjustment[3];
     char tz;
     int i;
    
-    if (argc != 11) {
-        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <dx> <dy> <dz> <tz>\n");
+    if (argc != 8) {
+        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <tz>\n");
         fprintf(stderr, "\n");
-        fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i) + d(i), where\n");
+        fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i), where\n");
         fprintf(stderr, "  h(i) = -128 .. 127\n");
         fprintf(stderr, "  g(i) = 0 .. 15\n");
-        fprintf(stderr, "  d(i) = -128 .. 127\n");
         fprintf(stderr, "  a, b = internal scaling parameters\n");
         fprintf(stderr, "\n");
-        fprintf(stderr, "Calibration requires establishing measurements in a known field strength\n");
-        fprintf(stderr, "and ensuring that as device is rotated, the average readout is 0,\n");
-        fprintf(stderr, "and maximum value along each axis equals the known strength.\n");
-        fprintf(stderr, "The Earth's magnetic field is about 50 uT.\n");
-        fprintf(stderr, "\n");
-        fprintf(stderr, "tz is the temperature zero reference value.");
+        fprintf(stderr, "Attention ROM makers. The analog parameters hx, hy and hz can be left at 0.\n");
+        fprintf(stderr, "Per-axis gain needs to be calibrated per device.\n");
+        fprintf(stderr, "The Earth's magnetic field is approximately 45 uT and should\n");
+        fprintf(stderr, "read the same in every orientation of device.\n");
         _exit(100);
     }
 
@@ -337,17 +370,13 @@ int main(int argc, char **argv)
         params[i] = corr;
         params[3+i] = atoi(argv[4+i]);
     }
-    /* params 7 .. 9 */
-    for (i = 0; i < 3; i ++) {
-        digital_adjustment[i] = atoi(argv[7+i]);
-    }
-    tz = atoi(argv[10]);
+    tz = atoi(argv[7]);
  
     open_fds(params);
     while (1) {
         switch (state) {
         case READ:
-            state = readLoop(tz, digital_adjustment);
+            state = readLoop(tz);
             break;
         case SLEEP:
             state = sleepLoop();
