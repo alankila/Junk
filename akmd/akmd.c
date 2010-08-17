@@ -110,8 +110,9 @@ static void calibrate_digital(int *m)
      * decay function. */
     static int calibrate_min[3] = {  4096,  4096,  4096 };
     static int calibrate_max[3] = { -4096, -4096, -4096 };
-    /* Earth's magnetic field */
-    const int EXPECTED_MAGNETIC_FIELD_UT = 45;
+    /* Earth's magnetic field. It's probably a good idea to estimate this
+     * slightly low so that extreme values get more rapidly rejected. */
+    const int EXPECTED_MAGNETIC_FIELD_UT = 40;
     /* Stop moving bound if it's closer than this value from measurement.
      * 4 follows from 1/16, the 1 from the fact that maximum expected distance
      * is twice the field strength. Is estimate of field's value sufficient?
