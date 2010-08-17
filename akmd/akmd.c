@@ -66,15 +66,15 @@ static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
 
-#define CALIBRATE_DECAY_SPEED 8
+#define CALIBRATE_DECAY_SPEED 16
 #define CALIBRATE_MAX_VALUE (128 << CALIBRATE_DECAY_SPEED)
-#define CALIBRATE_STOP_DISTANCE (50 << CALIBRATE_DECAY_SPEED)
+#define CALIBRATE_STOP_DISTANCE (16 << CALIBRATE_DECAY_SPEED)
 static int calibrate_min[3] = {  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE };
 static int calibrate_max[3] = { -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE };
 
 /* Establish the min-max bounds for every measurement seen so far with
  * decay function. */
-static void calibrate(int *m)
+static void calibrate(int *m, int *gain)
 {
     int i;
 
@@ -95,8 +95,9 @@ static void calibrate(int *m)
         calibrate_max[i] -= (calibrate_max[i] - val) / CALIBRATE_STOP_DISTANCE;
 
         /* Apply current estimate of the midpoint correction adjustment. */
-        int correction = (calibrate_max[i] + calibrate_min[i]) >> (CALIBRATE_DECAY_SPEED + 1);
-        m[i] -= correction;
+        int correction = (calibrate_max[i] + calibrate_min[i]) >> (CALIBRATE_DECAY_SPEED + 1 - 4);
+        m[i] = (m[i] << 4) - correction;
+        m[i] = m[i] * gain[i] >> 16;
     }
 
     /* We should also estimate the analog gain from examining the value
@@ -168,7 +169,7 @@ static float length_i(int *a)
     return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
 }
 
-static state_t readLoop(char tz)
+static state_t readLoop(int *gain, char tz)
 {
     unsigned int status;
     unsigned short delay;
@@ -228,7 +229,7 @@ static state_t readLoop(char tz)
   
     //LOGI("a=(%d %d %d), m=(%d %d %d)", a[0], a[1], a[2], m[0], m[1], m[2]);
     
-    calibrate(m);
+    calibrate(m, gain);
  
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
@@ -275,10 +276,9 @@ static state_t readLoop(char tz)
     final_data[7] = (128 + a[2] * 720) >> 8;
     final_data[8] = (128 + a[1] * -720) >> 8;
 
-    // CONVERT_M = 1/16 = 16 values = 1 uT.
-    final_data[9]  =  m[0] << 4;
-    final_data[10] =  m[1] << 4;
-    final_data[11] = -m[2] << 4;
+    final_data[9]  =  m[0];
+    final_data[10] =  m[1];
+    final_data[11] = -m[2];
    
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
@@ -333,6 +333,7 @@ static state_t sleepLoop()
 int main(int argc, char **argv)
 {
     state_t state = SLEEP;
+    int gain[3];
     char params[6];
     char tz;
     int i;
@@ -352,7 +353,7 @@ int main(int argc, char **argv)
         _exit(100);
     }
 
-    /* args 1 .. 3, 4 .. 6 */
+    /* args 1 .. 3 */
     for (i = 0; i < 3; i ++) {
         /* AKM specification says that values 0 .. 127 are monotonously
          * decreasing corrections, and values 128 .. 255 are
@@ -364,7 +365,13 @@ int main(int argc, char **argv)
         }
         /* now straightened so that -128 .. 127 can be used, center at 0 */
         params[i] = corr;
-        params[3+i] = atoi(argv[4+i]);
+        /* set midpoint analog gain, do all control digitally */
+        params[3+i] = 8;
+    }
+    /* args 4 .. 6 */
+    for (i = 0; i < 3; i ++) {
+        float g = atoi(argv[4+i]);
+        gain[i] = powf(10.0f, (g - 8) * 0.4 / 20) * 65536;
     }
     tz = atoi(argv[7]);
  
@@ -372,7 +379,7 @@ int main(int argc, char **argv)
     while (1) {
         switch (state) {
         case READ:
-            state = readLoop(tz);
+            state = readLoop(gain, tz);
             break;
         case SLEEP:
             state = sleepLoop();
