@@ -1,0 +1,129 @@
+This document describes the open-source akmd device. Aftermarket OS makers
+should read this document fully to understand the akmd daemon better.
+
+Background
+----------
+
+HTC-manufactured Android phones contain within two chips, AKM8973 and BMA150.
+The AKM8973 is a magnetometer and temperature sensor, BMA150 is an
+accelerometer and temperature sensor. (The AKM8973's temperature sensor
+is used to report ambient temperature.)
+
+The userspace driver was reverse-engineered by watching the ioctls performed by
+the device and reading the open-source kernel driver and the freely available
+technical manuals AK8973_IC-ON-LINE.CN.pdf and
+BMA150_DataSheet_Rev.1.5_30May2008.pdf.
+
+Device Coordinate System (DCS)
+------------------------.-----
+
+Device Coordinate System is the reference for measurements. Imagine that your
+phone is in portrait orientation in your right hand so that index finger
+goes along the left edge of the phone and the thumb is placed along the
+bottom edge of the phone. The middle finger points away from the device. The
+thumb is the x coordinate, index finger the y coordinate and middle finger
+the z coordinate. The coordinate axis increase towards the tips of your
+fingers.
+
+  y^-----.
+   |     |
+   |     |
+   |     |
+   | ooo |
+   *----->
+  /      x
+ z
+
+Approximate programming stack
+-----------------------------
+
+1. akmd / C
+   - reads hardware, publishes data on /dev/input called "compass"
+
+2. libsensors.so / C++
+   - talks to /dev/akm8973_aot to set measurement parameters, reads "compass"
+
+3. Sensor JNI API / C
+   - massages data into Java float[] by sensor
+
+4. Sensor / Java
+   - represents the measurement in Java side
+
+5. SensorManager / Java
+   - handles the application visible sensor service
+
+The layers in the stack appear to swap y/z axis and flip the signs of many
+of the measurements from the DCS to something else. I haven't tracked them
+all down yet. I know that libsensors flips the sign of roll, acceleration's
+X, Z and magnetic fields X and Y.
+
+In addition to that, akmd must flip magnetic field Z and swap the acceleration
+Y/Z axis.
+
+Accelerometer
+--------------
+
+The raw measurement from BMA150 reports gravity as a negative value when the
+device lays on its back on table in the z direction. The value range is
+-2 .. 2 G, and reported values are -512 .. 511. The device supports
+different acceleration sensitivities, but only the most sensitive is used.
+
+If the device lays on its left edge, the x acceleration is reported negative.
+However, if the device is in the portrait orientation, y is reported as
+positive. Therefore, the y axis is inverted by akmd to conform to the DCS.
+
+Magnetic sensor
+---------------
+
+The magnetic sensor reports axes consistently with DCS. The values are
+reported as 8-bit value from 0 .. 255, and its interpretation depends on given
+analog gain, analog offset, and any post-processing the akmd wants to do.
+
+The analog gain is used to multiply the raw sensor measurement by
+logarithmically specified factor between 1 and 2. Analog offset can be used
+to adjust the measured value to reside close to 0 when no external magnetic
+field is applied. The AK8973 suggests setting the parameters so that 1 LSB =
+1 uT.
+
+My akmd sets the gain to maximum and attenuates the measurement digitally
+towards 1 LSB = 1/16 uT which is expected by the android stack. The analog
+offset is adjusted if the akmd notices that the digital result got clipped.
+The adjustments should rapidly find a workable setting where normal magnetic
+field measurements do not cause further offset changes to occur.
+
+The gain of 0 reads magnetic field variability as something close to -35 .. 35
+in HTC Hero. The gain of 15 gives nearly double that, which still fits well
+into single 8-bit value.
+
+I would suggest ROM authors to use logcat when booting their phone and note
+the range adjustment messages sent by akmd. After that, the shell script
+wrapper that runs the real akmd can be changed to start from good settings.
+It is fairly likely that user's devices will work well from the vendor's
+settings.
+
+Also, the analog gain across three axes should be checked to see that the
+sensor reports about 45 uT magnetic field in all directions. To this end, I
+designed a utility called MagneticFlux which is on my Junk github repository.
+
+Yaw, Pitch, Roll
+----------------
+
+These values are calculated from accelerometer and compass data. The
+yaw (also called azimuth) defines the device's orientation in Earth's
+magnetic field. The calculation of azimuth involves discovering the
+direction to Earth, projecting the magnetic field to Earth's tangent space
+and then calculating the component angle in the tangent space.
+
+Azimuth defined this way does not depend on device's orientation, and the
+needle's orientation does not change much when the device is rotated, if
+calibration is good. However, turning the device past the upright
+position flips the needle around, whereas rolling the device does not.
+These are simply bugs that need to be fixed.
+
+Pitch and roll are estimated from accelerometer by performing
+spherical-to-cartesian transformation. Some low-pass filtering for the
+accelerometer would be good to improve the stability of these estimates.
+
+Besides low-pass filtering the accelerometer data, the responsivity of the
+controls could be improved by estimating device's rotation from the magnetic
+field vector and modify the pitch and roll quicker based on this.

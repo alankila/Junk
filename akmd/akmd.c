@@ -5,47 +5,12 @@
  *
  * Copyright Antti S. Lankila, 2010, licensed under the Apache License.
  *
- * The driver does not use akm8973's acceleration data. Instead, it
- * queries the bma150 sensor and reports its data instead.
- *
- * The ioctl to read data from is called akm8973_daemon. The control
+ * The device node to read data from is called akm8973_daemon. The control
  * device node is akm8973_aot. The libsensors from android talks to
- * akm8973_aot. The akm8973_daemon samples the chip data and performs
- * the analysis. The measurement is inherently a slow process, and therefore
- * cached copy of results is periodically updated to the /dev/input node
- * called "compass" using an ioctl on the akm8973_daemon.
- *
- * Here are some definitions of various orientations:
- *
- * If device is lying on its back on table:
- * x = the short edge of device, increasing towards right
- * y = the long endge of device, increasing towards top
- * z = the direction of sky, increasing towards sky
- *
- * Yaw (Azimuth): 0 points towards North, 90 to East, 180 to South, 270 to West
- * Pitch: rotation around X axis, with positive values when z axis moves
- * towards y axis ("down")
- * Roll: rotation around Y axis, with positive values when z axis moves
- * towards x axis ("right")
- *
- * libsensors flips the sign of Roll, acceleration A, acceleration Z,
- * magnetic field X, magnetic field Y.
- *
- * BMA150 reports acceleration like this:
- *
- * gravity vector z is negative when device lays flat on table.
- * when raised up into portrait orientation, y is positive.
- * when laying on the left edge, x is negative.
- *
- * Therefore BMA's y differs from the others, as y is incrementing
- * down the phone's edge rather than towards top.
- *
- * Magnetic sensor orientation has axis according to device coordinate system:
- * x decrements when approaching from direction of positive x (left)
- * y decrements when approaching from direction of positive y (keyboard)
- * z decrements when approaching from direction of positive z (below)
- * (I just tested with a magnetized screwdriver; it is possible that
- *  all axes are consistently flipped.)
+ * akm8973_aot. The akmd samples the chip data and performs the analysis.
+ * The measuring is inherently a slow process, and therefore a cached
+ * copy of results is periodically updated to the /dev/input node "compass"
+ * using an ioctl on the akm8973_daemon.
  */
 #include <fcntl.h>
 #include <math.h>
