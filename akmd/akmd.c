@@ -66,7 +66,7 @@ static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
 
-#define CALIBRATE_DECAY_SPEED 6
+#define CALIBRATE_DECAY_SPEED 8
 #define CALIBRATE_MAX_VALUE (2048 << CALIBRATE_DECAY_SPEED)
 static int calibrate_min[3] = {  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE };
 static int calibrate_max[3] = { -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE };
