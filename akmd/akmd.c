@@ -66,38 +66,92 @@ static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
 
-#define CALIBRATE_DECAY_SPEED 16
-#define CALIBRATE_MAX_VALUE (128 << CALIBRATE_DECAY_SPEED)
-#define CALIBRATE_STOP_DISTANCE (16 << CALIBRATE_DECAY_SPEED)
-static int calibrate_min[3] = {  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE };
-static int calibrate_max[3] = { -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE };
+static char temperature_zero = 0;
 
-/* Establish the min-max bounds for every measurement seen so far with
- * decay function. */
-static void calibrate(int *m, int *gain)
+/* The actual gain used on hardware */
+static int fixed_analog_gain = 8;
+/* Digital gain to compensate for analog setting. */
+static int digital_gain[3];
+/* The user requested analog gain */
+static int analog_gain[3];
+/* The user requested analog offset */
+static int analog_offset[3];
+
+static void calibrate_analog()
 {
+    /* TBD */
+}
+
+static void calibrate_analog_apply()
+{
+    char params[6] = {
+        analog_offset[0], analog_offset[1], analog_offset[2],
+        fixed_analog_gain, fixed_analog_gain, fixed_analog_gain,
+    };
+
     int i;
+    for (i = 0; i < 6; i ++) {
+        char rwbuf[5] = { 2, 0xe1+i, params[i], 0, 0 };
+        if (ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) != 0) {
+            perror("Failed to write analog controls\n");
+            _exit(3);
+        }
+    }
 
     for (i = 0; i < 3; i ++) {
-        int val = m[i] << CALIBRATE_DECAY_SPEED;
+        int g = analog_gain[i];
+        digital_gain[i] = powf(10.0f, (g - fixed_analog_gain) * 0.4f / 20.0f) * 65536.0f;
+    }
+}
+
+static void calibrate_digital(int *m)
+{
+    /* Establish the min-max bounds for every measurement seen so far with
+     * decay function. */
+    static int calibrate_min[3] = {  4096,  4096,  4096 };
+    static int calibrate_max[3] = { -4096, -4096, -4096 };
+    /* Earth's magnetic field */
+    const int EXPECTED_MAGNETIC_FIELD_UT = 45;
+    /* Stop moving bound if it's closer than this value from measurement.
+     * 4 follows from 1/16, the 1 from the fact that maximum expected distance
+     * is twice the field strength. Is estimate of field's value sufficient?
+     * It might be safer to use slightly lower value, and compensate by doing
+     * the decay slower. */
+    const int BELIEVABLE_BOUND = EXPECTED_MAGNETIC_FIELD_UT << (4 + 1);
+
+    //LOGI("a=(%d %d %d), m=(%d %d %d)", a[0], a[1], a[2], m[0], m[1], m[2]);
+    int i;
+    for (i = 0; i < 3; i ++) {
+        /* Analog clipping handling */
+        if (m[i] == 127 || m[i] == -128) {
+            calibrate_analog(m[i] == -128);
+        }
+
+        m[i] = m[i] * digital_gain[i] >> 12;
+        /* 1/16 uT */
+
         /* minimum value seen */
-        if (calibrate_min[i] > val) {
-            calibrate_min[i] = val;
+        if (calibrate_min[i] > m[i]) {
+            calibrate_min[i] = m[i];
         }
         /* maximum value seen */
-        if (calibrate_max[i] < val) {
-            calibrate_max[i] = val;
+        if (calibrate_max[i] < m[i]) {
+            calibrate_max[i] = m[i];
         }
-        /* gradually move the minimum towards the positive infinity.
-         * This allows us to recover from spikes like nearby magnetic
-         * objects. */
-        calibrate_min[i] += (val - calibrate_min[i]) / CALIBRATE_STOP_DISTANCE;
-        calibrate_max[i] -= (calibrate_max[i] - val) / CALIBRATE_STOP_DISTANCE;
+
+        /* gradually move too large-seeming minimum closer to the current
+         * measurement point. This compensates for temperature-dependent
+         * drifts and recovers after close encounters of magnetic kind. */
+        if (m[i] > calibrate_min[i] + BELIEVABLE_BOUND) {
+            calibrate_min[i] += 1;
+        }
+        if (m[i] < calibrate_max[i] - BELIEVABLE_BOUND) {
+            calibrate_max[i] -= 1;
+        }
 
         /* Apply current estimate of the midpoint correction adjustment. */
-        int correction = (calibrate_max[i] + calibrate_min[i]) >> (CALIBRATE_DECAY_SPEED + 1 - 4);
-        m[i] = (m[i] << 4) - correction;
-        m[i] = m[i] * gain[i] >> 16;
+        int correction = (calibrate_max[i] + calibrate_min[i]) >> 1;
+        m[i] -= correction;
     }
 
     /* We should also estimate the analog gain from examining the value
@@ -106,45 +160,6 @@ static void calibrate(int *m, int *gain)
      * gain such that it gives 45. This could be seen to be cheating.
      * The alternative is to force ROM vendors to supply reasonable gain
      * values. */
-}
-
-static void open_fds(char *params)
-{
-    short mode;
-    char rwbuf[5];
-    int i;
-
-    akm_fd = open(AKM_NAME, O_RDONLY);
-    if (akm_fd == -1) {
-        perror("Failed to open " AKM_NAME);
-        _exit(1);
-    }
-    mode = AKECS_MODE_POWERDOWN;
-    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
-        perror("Failed to put akm8973 to sleep");
-        _exit(2);
-    }
-
-    for (i = 0; i < 6; i ++) {
-        rwbuf[0] = 2;
-        rwbuf[1] = 0xe1 + i;
-        rwbuf[2] = params[i];
-        if (ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) != 0) {
-            perror("Failed to write gain controls\n");
-            _exit(3);
-        }
-    }
-
-    bma150_fd = open(BMA150_NAME, O_RDONLY);
-    if (bma150_fd == -1) {
-        perror("Failed to open " BMA150_NAME);
-        _exit(4);
-    }
-    mode = BMA_MODE_SLEEP;
-    if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
-        perror("Failed to put bma150 to sleep initially.");
-        _exit(5);
-    }
 }
 
 static void cross_product(int *a, float *b, float *c)
@@ -169,67 +184,9 @@ static float length_i(int *a)
     return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
 }
 
-static state_t readLoop(int *gain, char tz)
+static void build_result_vector(int *a, short temperature, int *m, short *out)
 {
-    unsigned int status;
-    unsigned short delay;
-    short mode;
-
-    struct timespec interval;
-    char akm_data[5];
-    short bma150_data[7];
-    short final_data[12];
-
-    if (ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) != 0) {
-        perror("akm8973: Failed to query control channel (aot) open count");
-        _exit(10);
-    }
-
-    /* Nobody has aot socket open? We'll close the shop... */
-    if (status == 0) {
-        mode = AKECS_MODE_POWERDOWN;
-        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
-            perror("akm8973: Failed to SET_MODE=POWERDOWN");
-            _exit(11);
-        }
-        mode = BMA_MODE_SLEEP;
-        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
-            perror("bma150: Failed to SET_MODE=SLEEP");
-            _exit(12);
-        }
-
-        return SLEEP;
-    }
-
-    /* Measuring puts readable state to 0. It is going to take
-     * some time before the values are ready. */
-    mode = AKECS_MODE_MEASURE;
-    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
-        perror("akm8973: Failed to SET_MODE=READ");
-        _exit(13);
-    }
-
-    /* Significance and range of values can be extracted from bma150.c. */
-    if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
-        perror("bma150: Failed to READ_ACCELERATION");
-        _exit(14);
-    }
-    int a[] = { bma150_data[0], -bma150_data[1], bma150_data[2] };
-
-    /* Significance and range of values can be extracted from
-     * online AKM 8973 manual. The kernel driver is dumb. */
-    if (ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) != 0) {
-        perror("akm8973: Failed to GETDATA");
-        _exit(15);
-    }
-    short temperature = (signed char) -(akm_data[1] + tz);
-    int m[] = { 127 - (unsigned char) akm_data[2],
-                127 - (unsigned char) akm_data[3],
-                127 - (unsigned char) akm_data[4] };
-  
-    //LOGI("a=(%d %d %d), m=(%d %d %d)", a[0], a[1], a[2], m[0], m[1], m[2]);
-    
-    calibrate(m, gain);
+    calibrate_digital(m);
  
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
@@ -246,40 +203,105 @@ static state_t readLoop(int *gain, char tz)
     /* From a, we need to discover 2 suitable vectors. Cross product
      * is used to establish orthogonal basis in E. */
     float o1[3];
-    float o2[3];
     float ref[3] = { 0, -1, 0 };
-    /* a = 9 bits, o1 = 9 bits */
     cross_product(a, ref, o1);
-    /* o2 = 18 bits */
+    float o2[3];
     cross_product(a, o1, o2);
     
     /* Now project magnetic field on components o1 and o2. */
-    /* m = 9 bits, o1 = 9 bits result 18 bits */
     float o1l = dot(m, o1) * length_f(o2);
-    /* m = 9 bits, o2 = 18 bits result 27 bits */
     float o2l = dot(m, o2) * length_f(o1);
 
     /* Establish the angle in E */
-    final_data[0] = 180.0f + atan2f(o1l, o2l) / (float) M_PI * 180.0f;
+    out[0] = 180.0f + atan2f(o1l, o2l) / (float) M_PI * 180.0f;
     /* pitch */
-    final_data[1] = atan2f(a[1], -a[2]) / (float) M_PI * 180.0f;
+    out[1] = atan2f(a[1], -a[2]) / (float) M_PI * 180.0f;
     /* roll */
-    final_data[2] = 90.0f - acosf(a[0] / length_i(a)) / (float) M_PI * 180.0f;
+    out[2] = 90.0f - acosf(a[0] / length_i(a)) / (float) M_PI * 180.0f;
     
-    final_data[3] = temperature;
+    out[3] = temperature;
     /* FIXME: how to establish accuracy? */
-    final_data[4] = 3; // status of mag. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
-    final_data[5] = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+    out[4] = 3; // status of mag. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+    out[5] = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
-    final_data[6] = (128 + a[0] * 720) >> 8;
-    final_data[7] = (128 + a[2] * 720) >> 8;
-    final_data[8] = (128 + a[1] * -720) >> 8;
+    out[6] = (128 + a[0] * 720) >> 8;
+    out[7] = (128 + a[2] * 720) >> 8;
+    out[8] = (128 + a[1] * -720) >> 8;
 
-    final_data[9]  =  m[0];
-    final_data[10] =  m[1];
-    final_data[11] = -m[2];
-   
+    out[9]  =  m[0];
+    out[10] =  m[1];
+    out[11] = -m[2];
+}
+
+static state_t readLoop()
+{
+    {
+        unsigned int status;
+        if (ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) != 0) {
+            perror("akm8973: Failed to query control channel (aot) open count");
+            _exit(10);
+        }
+
+        /* Nobody has aot socket open? We'll close the shop... */
+        if (status == 0) {
+            short mode = AKECS_MODE_POWERDOWN;
+            if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
+                perror("akm8973: Failed to SET_MODE=POWERDOWN");
+                _exit(11);
+            }
+            mode = BMA_MODE_SLEEP;
+            if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
+                perror("bma150: Failed to SET_MODE=SLEEP");
+                _exit(12);
+            }
+
+            return SLEEP;
+        }
+    }
+
+    /* Measuring puts readable state to 0. It is going to take
+     * some time before the values are ready. */
+    {
+        short mode = AKECS_MODE_MEASURE;
+        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
+            perror("akm8973: Failed to SET_MODE=READ");
+            _exit(13);
+        }
+    }
+
+    int a[3];
+    {
+        /* Significance and range of values can be extracted from bma150.c. */
+        short bma150_data[7]; // note: ioctl says 7 values, kernel driver writes 3
+        if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
+            perror("bma150: Failed to READ_ACCELERATION");
+            _exit(14);
+        }
+        a[0] = bma150_data[0];
+        a[1] = -bma150_data[1];
+        a[2] = bma150_data[2];
+    }
+
+    /* Significance and range of values can be extracted from
+     * online AKM 8973 manual. The kernel driver is dumb. */
+    short temperature;
+    int m[3];
+    {
+        char akm_data[5];
+        if (ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) != 0) {
+            perror("akm8973: Failed to GETDATA");
+            _exit(15);
+        }
+        temperature = (signed char) -(akm_data[1] + temperature_zero);
+        m[0] = 127 - (unsigned char) akm_data[2];
+        m[1] = 127 - (unsigned char) akm_data[3];
+        m[2] = 127 - (unsigned char) akm_data[4];
+    }
+
+    short final_data[12];
+    build_result_vector(a, temperature, m, final_data);
+
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
         perror("bma150: Failed to SET_YPR={akm data}");
@@ -287,6 +309,7 @@ static state_t readLoop(int *gain, char tz)
     }
 
     /* Get time until next update. */
+    unsigned short delay;
     if (ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) != 0) {
          perror("akm8973: Failed to GET_DELAY");
         _exit(17);
@@ -296,9 +319,12 @@ static state_t readLoop(int *gain, char tz)
      * achieve truly periodic timer tick. Right now we really
      * sleep for interval + processing time. */
     //delay = 500;
-    interval.tv_sec = delay / 1000;
-    interval.tv_nsec = 1000000 * (delay % 1000);
+    struct timespec interval = {
+        .tv_sec = delay / 1000,
+        .tv_nsec = 1000000 * (delay % 1000),
+    };
     nanosleep(&interval, NULL);
+
     return READ;
 }
 
@@ -330,12 +356,34 @@ static state_t sleepLoop()
     return SLEEP;
 }
 
+static void open_fds()
+{
+    akm_fd = open(AKM_NAME, O_RDONLY);
+    if (akm_fd == -1) {
+        perror("Failed to open " AKM_NAME);
+        _exit(1);
+    }
+    short mode = AKECS_MODE_POWERDOWN;
+    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
+        perror("Failed to put akm8973 to sleep");
+        _exit(2);
+    }
+
+    bma150_fd = open(BMA150_NAME, O_RDONLY);
+    if (bma150_fd == -1) {
+        perror("Failed to open " BMA150_NAME);
+        _exit(4);
+    }
+    mode = BMA_MODE_SLEEP;
+    if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
+        perror("Failed to put bma150 to sleep initially.");
+        _exit(5);
+    }
+}
+
 int main(int argc, char **argv)
 {
     state_t state = SLEEP;
-    int gain[3];
-    char params[6];
-    char tz;
     int i;
    
     if (argc != 8) {
@@ -353,33 +401,28 @@ int main(int argc, char **argv)
         _exit(100);
     }
 
-    /* args 1 .. 3 */
+    /* args 1 .. 3, 4 .. 6 */
     for (i = 0; i < 3; i ++) {
         /* AKM specification says that values 0 .. 127 are monotonously
          * decreasing corrections, and values 128 .. 255 are
-         * monotonously increasing positive corrections and that 0 and 128
+         * monotonously increasing corrections and that 0 and 128
          * are near each other. */
         int corr = atoi(argv[1+i]);
         if (corr < 0) {
             corr = 127 - corr;
         }
         /* now straightened so that -128 .. 127 can be used, center at 0 */
-        params[i] = corr;
-        /* set midpoint analog gain, do all control digitally */
-        params[3+i] = 8;
+        analog_offset[i] = corr;
+        analog_gain[i] = atoi(argv[4+i]);
     }
-    /* args 4 .. 6 */
-    for (i = 0; i < 3; i ++) {
-        float g = atoi(argv[4+i]);
-        gain[i] = powf(10.0f, (g - 8) * 0.4 / 20) * 65536;
-    }
-    tz = atoi(argv[7]);
+    temperature_zero = atoi(argv[7]);
  
-    open_fds(params);
+    open_fds();
+    calibrate_analog_apply();
     while (1) {
         switch (state) {
         case READ:
-            state = readLoop(gain, tz);
+            state = readLoop();
             break;
         case SLEEP:
             state = sleepLoop();
