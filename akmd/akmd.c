@@ -67,7 +67,8 @@ static int akm_fd, bma150_fd;
 typedef enum { READ, SLEEP } state_t;
 
 #define CALIBRATE_DECAY_SPEED 8
-#define CALIBRATE_MAX_VALUE (2048 << CALIBRATE_DECAY_SPEED)
+#define CALIBRATE_MAX_VALUE (128 << CALIBRATE_DECAY_SPEED)
+#define CALIBRATE_STOP_DISTANCE (50 << CALIBRATE_DECAY_SPEED)
 static int calibrate_min[3] = {  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE,  CALIBRATE_MAX_VALUE };
 static int calibrate_max[3] = { -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE, -CALIBRATE_MAX_VALUE };
 
@@ -90,13 +91,8 @@ static void calibrate(int *m)
         /* gradually move the minimum towards the positive infinity.
          * This allows us to recover from spikes like nearby magnetic
          * objects. */
-        if (calibrate_min[i] < CALIBRATE_MAX_VALUE) {
-            calibrate_min[i] += 1;
-        }
-        /* gradually move the maximum towards the negative infinity */
-        if (calibrate_max[i] > -CALIBRATE_MAX_VALUE) {
-            calibrate_max[i] -= 1;
-        }
+        calibrate_min[i] += (val - calibrate_min[i]) / CALIBRATE_STOP_DISTANCE;
+        calibrate_max[i] -= (calibrate_max[i] - val) / CALIBRATE_STOP_DISTANCE;
 
         /* Apply current estimate of the midpoint correction adjustment. */
         int correction = (calibrate_max[i] + calibrate_min[i]) >> (CALIBRATE_DECAY_SPEED + 1);
