@@ -69,18 +69,13 @@ typedef enum { READ, SLEEP } state_t;
 static char temperature_zero = 0;
 
 /* The actual gain used on hardware */
-static int fixed_analog_gain = 8;
+static int fixed_analog_gain = 15;
 /* Digital gain to compensate for analog setting. */
 static int digital_gain[3];
 /* The user requested analog gain */
 static int analog_gain[3];
 /* The user requested analog offset */
 static int analog_offset[3];
-
-static void calibrate_analog()
-{
-    /* TBD */
-}
 
 static void calibrate_analog_apply()
 {
@@ -104,6 +99,13 @@ static void calibrate_analog_apply()
     }
 }
 
+static void calibrate_analog(int i, int dir)
+{
+    analog_offset[i] += dir;
+    LOGI("Adjusting analog offset on axis %d to %d", i, analog_offset[i]);
+    calibrate_analog_apply();
+}
+
 static void calibrate_digital(int *m)
 {
     /* Establish the min-max bounds for every measurement seen so far with
@@ -125,7 +127,7 @@ static void calibrate_digital(int *m)
     for (i = 0; i < 3; i ++) {
         /* Analog clipping handling */
         if (m[i] == 127 || m[i] == -128) {
-            calibrate_analog(m[i] == -128);
+            calibrate_analog(i, m[i] == 127 ? -1 : 1);
         }
 
         m[i] = m[i] * digital_gain[i] >> 12;

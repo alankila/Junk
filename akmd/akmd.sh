@@ -5,6 +5,6 @@
 # 3rd: 0C reference value 0 .. 255
 
 exec akmd.free \
-       6    -2    -3 \
+      10     0     0 \
        4     3     4 \
      112
