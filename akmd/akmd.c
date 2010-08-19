@@ -305,13 +305,13 @@ static state_t readLoop()
 
         /* Nobody has aot socket open? We'll close the shop... */
         if (status == 0) {
-            short mode = AKECS_MODE_POWERDOWN;
-            if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
+            short amode = AKECS_MODE_POWERDOWN;
+            if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
                 perror("akm8973: Failed to SET_MODE=POWERDOWN");
                 _exit(11);
             }
-            mode = BMA_MODE_SLEEP;
-            if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
+            char bmode = BMA_MODE_SLEEP;
+            if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
                 perror("bma150: Failed to SET_MODE=SLEEP");
                 _exit(12);
             }
@@ -333,7 +333,7 @@ static state_t readLoop()
     int a[3];
     {
         /* Significance and range of values can be extracted from bma150.c. */
-        short bma150_data[7]; // note: ioctl says 7 values, kernel driver writes 3
+        short bma150_data[8];
         if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
             perror("bma150: Failed to READ_ACCELERATION");
             _exit(14);
@@ -378,7 +378,6 @@ static state_t readLoop()
     /* We could actually use gettimeofday when we start to
      * achieve truly periodic timer tick. Right now we really
      * sleep for interval + processing time. */
-    //delay = 500;
     struct timespec interval = {
         .tv_sec = delay / 1000,
         .tv_nsec = 1000000 * (delay % 1000),
@@ -390,18 +389,15 @@ static state_t readLoop()
 
 static state_t sleepLoop()
 {
-    int status;
-    short mode;
-    struct timespec interval;
-
     /* Aot has been opened? Resume if so. */
+    int status;
     if (ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) != 0) {
         perror("akm8973: Failed to query control channel (AOT) open count");
         _exit(20);
     }
 
     if (status != 0) {
-        mode = BMA_MODE_NORMAL;
+        char mode = BMA_MODE_NORMAL;
         // akm device is woken by readLoop().
         if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
             perror("bma150: Failed to SET_MODE=NORMAL");
@@ -410,11 +406,10 @@ static state_t sleepLoop()
         return READ;
     }
 
-    /* Refresh state 1 per second nevertheless. */
-    readLoop();
-
-    interval.tv_sec = 1;
-    interval.tv_nsec = 0;
+    struct timespec interval = {
+        .tv_sec = 1,
+        .tv_nsec = 0,
+    };
     nanosleep(&interval, NULL);
     return SLEEP;
 }
@@ -426,10 +421,12 @@ static void open_fds()
         perror("Failed to open " AKM_NAME);
         _exit(1);
     }
-    short mode = AKECS_MODE_POWERDOWN;
-    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
-        perror("Failed to put akm8973 to sleep");
-        _exit(2);
+    {
+        short mode = AKECS_MODE_POWERDOWN;
+        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
+            perror("Failed to put akm8973 to sleep");
+            _exit(2);
+        }
     }
 
     bma150_fd = open(BMA150_NAME, O_RDONLY);
@@ -437,10 +434,17 @@ static void open_fds()
         perror("Failed to open " BMA150_NAME);
         _exit(4);
     }
-    mode = BMA_MODE_SLEEP;
-    if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
-        perror("Failed to put bma150 to sleep initially.");
+    if (ioctl(bma150_fd, BMA_IOCTL_INIT, NULL) != 0) {
+        perror("Failed to init bma150.");
         _exit(5);
+    }
+
+    {
+        char mode = BMA_MODE_SLEEP;
+        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
+            perror("Failed to put bma150 to sleep initially.");
+            _exit(5);
+        }
     }
 }
 
