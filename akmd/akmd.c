@@ -142,7 +142,7 @@ static void calibrate_digital_rough(int *m, int *rc)
     }
 }
 
-#define PCR (16)
+#define PCR 32
 static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
 {
     /* Record current sample at point cloud using the rough estimate to
@@ -157,8 +157,9 @@ static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
     int len = (int) length_i(rm) / 4 + 1;
     rm[0] /= len;
     rm[1] /= len;
-    /* 3rd vector is not independent because we are normalized. */
-    int idx = ((rm[0] & 3) << 2) | (rm[1] & 3);
+    /* 3rd vector is not independent because we are normalized. It can
+     * point above or below the xy plane, though, givin total of 2+2+1 bits. */
+    int idx = ((rm[0] & 3) << 3) | ((rm[1] & 3) << 1) | (rm[2] < 0 ? 1 : 0);
 
     int *pos = pc[idx];
     pos[0] = m[0];
