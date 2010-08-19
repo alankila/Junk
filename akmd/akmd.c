@@ -46,14 +46,19 @@ static int analog_offset[3];
 /****************************************************************************/
 /* Some vector utilities                                                    */
 /****************************************************************************/
-static void cross_product(int *a, float *b, float *c)
+static void cross_product_iff(int *a, float *b, float *c)
 {
     c[0] = a[1] * b[2] - a[2] * b[1];
     c[1] = a[2] * b[0] - a[0] * b[2];
     c[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-static float dot(int *a, float *b)
+static int dot_ii(int *a, int *b)
+{
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+static float dot_if(int *a, float *b)
 {
     return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 }
@@ -137,8 +142,8 @@ static void calibrate_digital_rough(int *m, int *rc)
     }
 }
 
-#define PCR 5
-static void calibrate_digital_fine_update(int pc[PCR][PCR][3], int *m, int *rc)
+#define PCR (64)
+static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
 {
     /* Record current sample at point cloud using the rough estimate to
      * determine which bin to put the precise measurement in. */
@@ -147,49 +152,39 @@ static void calibrate_digital_fine_update(int pc[PCR][PCR][3], int *m, int *rc)
         m[1] - rc[1],
         m[2] - rc[2],
     };
-    int pitch = PCR * 0.5f * (1.0f + atan2f(rm[1], rm[0]) / (float) M_PI);
-    int roll  = PCR * acosf(rm[2] / length_i(rm)) / (float) M_PI;
 
-    if (pitch < 0) {
-        pitch = 0;
-    }
-    if (pitch > PCR-1) {
-        pitch = PCR-1;
-    }
-    if (roll < 0) {
-        roll = 0;
-    }
-    if (roll > PCR-1) {
-        roll = PCR-1;
-    }
-  
-    int *pos = pc[pitch][roll];
+    /* keep top 2 bits of normalized rm, and turn it into index */
+    int len = (int) length_i(rm) / 4 + 1;
+    rm[0] /= len;
+    rm[1] /= len;
+    rm[2] /= len;
+    int idx = ((rm[0] & 3) << 4) | ((rm[1] & 3) << 2) | (rm[2] & 3);
+
+    int *pos = pc[idx];
     pos[0] = m[0];
     pos[1] = m[1];
     pos[2] = m[2];
 }
 
-static float calibrate_digital_fine_fit_eval(int pc[PCR][PCR][3], float x, float y, float z, float r)
+static float calibrate_digital_fine_fit_eval(int pc[][3], float x, float y, float z, float r)
 {
-    int i, j;
+    int i;
 
     float error = 0;
     for (i = 0; i < PCR; i ++) {
-        for (j = 0; j < PCR; j ++) {
-            int *v = pc[i][j];
+        int *v = pc[i];
 
-            float dx = v[0] - x;
-            float dy = v[1] - y;
-            float dz = v[2] - z;
+        float dx = v[0] - x;
+        float dy = v[1] - y;
+        float dz = v[2] - z;
 
-            float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
-            error += d * d;
-        }
+        float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
+        error += d * d;
     }
     return sqrtf(error);
 }
 
-static void calibrate_digital_fine_fit(int pc[PCR][PCR][3], float *fc)
+static void calibrate_digital_fine_fit(int pc[][3], float *fc)
 {
     /* Region to use for derivate estimation, 16 = 1 uT */
     const float d = 16;
@@ -199,25 +194,17 @@ static void calibrate_digital_fine_fit(int pc[PCR][PCR][3], float *fc)
     float z = fc[2];
     float r = fc[3];
 
-    float error = calibrate_digital_fine_fit_eval(pc, x, y, z, r);
+    float error = calibrate_digital_fine_fit_eval(pc, x - d/2, y - d/2, z - d/2, r - d/2);
     float dx = calibrate_digital_fine_fit_eval(pc, x+d, y, z, r) - error;
     float dy = calibrate_digital_fine_fit_eval(pc, x, y+d, z, r) - error;
     float dz = calibrate_digital_fine_fit_eval(pc, x, y, z+d, r) - error;
     float dr = calibrate_digital_fine_fit_eval(pc, x, y, z, r+d) - error;
 
     /* Steepest descent */
-    if (dx != 0) {
-        fc[0] -= dx/d;
-    }
-    if (dy != 0) {
-        fc[1] -= dy/d;
-    }
-    if (dz != 0) {
-        fc[2] -= dz/d;
-    }
-    if (dr != 0) {
-        fc[3] -= dr/d;
-    }
+    fc[0] -= dx/d;
+    fc[1] -= dy/d;
+    fc[2] -= dz/d;
+    fc[3] -= dr/d;
 }
 
 static void calibrate_digital(int *m)
@@ -227,7 +214,7 @@ static void calibrate_digital(int *m)
     calibrate_digital_rough(m, rough_calibration);
 
     /* Use sphere fitting algorithm to do finer calibration. */
-    static int point_cloud[PCR][PCR][3];
+    static int point_cloud[PCR][3];
     static float fine_calibration[4] = { 0, 0, 0, 0 };
     calibrate_digital_fine_update(point_cloud, m, rough_calibration);
     calibrate_digital_fine_fit(point_cloud, fine_calibration);
@@ -241,42 +228,51 @@ static void calibrate_digital(int *m)
 /****************************************************************************/
 /* Sensor output calculation                                                */
 /****************************************************************************/
+static void estimate_earth(int *a, int *m, int *g)
+{
+    /* When device is not being accelerated, g = a is true. However, when
+     * device is being accelerated, we should check acceleration against the
+     * magnetometer to differentiate rotation of device (where field vector
+     * is turning also) from changes in position (where magnetic field is
+     * unchanged).
+     */
+    g[0] = a[0];
+    g[1] = a[1];
+    g[2] = a[2];
+}
+
 static void build_result_vector(int *a, short temperature, int *m, short *out)
 {
     calibrate_analog(m);
     calibrate_digital(m);
  
+    static int g[3];
+    estimate_earth(a, m, g);
+
     /*
      * I define yaw in the tangent plane E of the Earth, where direction
      * o2 points towards magnetic North.
-     *
-     * The device reports an acceleration vector a, which I take to be the
-     * normal that defines the tangent space.
-     *
-     * The device also reports magnetic vector m, which needs to be projected
-     * to the tangent space, and then the angle of that vector is to be
      * measured within the tangent space.
      */
 
-    /* From a, we need to discover 2 suitable vectors. Cross product
-     
-* is used to establish orthogonal basis in E. */
+    /* From g, we need to discover 2 suitable vectors. Cross product
+     * is used to establish orthogonal basis in E. */
     float o1[3];
     float ref[3] = { 0, -1, 0 };
-    cross_product(a, ref, o1);
+    cross_product_iff(g, ref, o1);
     float o2[3];
-    cross_product(a, o1, o2);
+    cross_product_iff(g, o1, o2);
     
     /* Now project magnetic field on components o1 and o2. */
-    float o1l = dot(m, o1) * length_f(o2);
-    float o2l = dot(m, o2) * length_f(o1);
+    float o1l = dot_if(m, o1) * length_f(o2);
+    float o2l = dot_if(m, o2) * length_f(o1);
 
     /* Establish the angle in E */
     out[0] = 180.0f + atan2f(o1l, o2l) / (float) M_PI * 180.0f;
     /* pitch */
-    out[1] = atan2f(a[1], -a[2]) / (float) M_PI * 180.0f;
+    out[1] = atan2f(g[1], -g[2]) / (float) M_PI * 180.0f;
     /* roll */
-    out[2] = 90.0f - acosf(a[0] / length_i(a)) / (float) M_PI * 180.0f;
+    out[2] = 90.0f - acosf(g[0] / length_i(g)) / (float) M_PI * 180.0f;
     
     out[3] = temperature;
     /* FIXME: how to establish accuracy? */
