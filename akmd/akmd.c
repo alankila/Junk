@@ -32,8 +32,8 @@ static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
 
+/* Temperature is value - zero. */
 static char temperature_zero = 0;
-
 /* The actual gain used on hardware */
 static int fixed_analog_gain = 15;
 /* Digital gain to compensate for analog setting. */
@@ -43,94 +43,9 @@ static int analog_gain[3];
 /* The user requested analog offset */
 static int analog_offset[3];
 
-static void calibrate_analog_apply()
-{
-    char params[6] = {
-        analog_offset[0], analog_offset[1], analog_offset[2],
-        fixed_analog_gain, fixed_analog_gain, fixed_analog_gain,
-    };
-
-    int i;
-    for (i = 0; i < 6; i ++) {
-        char rwbuf[5] = { 2, 0xe1+i, params[i], 0, 0 };
-        if (ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) != 0) {
-            perror("Failed to write analog controls\n");
-            _exit(3);
-        }
-    }
-
-    for (i = 0; i < 3; i ++) {
-        int g = analog_gain[i];
-        digital_gain[i] = powf(10.0f, (g - fixed_analog_gain) * 0.4f / 20.0f) * 65536.0f;
-    }
-}
-
-static void calibrate_analog(int i, int dir)
-{
-    analog_offset[i] += dir;
-    LOGI("Adjusting analog offset on axis %d to %d", i, analog_offset[i]);
-    calibrate_analog_apply();
-}
-
-static void calibrate_digital(int *m)
-{
-    /* Establish the min-max bounds for every measurement seen so far with
-     * decay function. */
-    static int calibrate_min[3] = {  4096,  4096,  4096 };
-    static int calibrate_max[3] = { -4096, -4096, -4096 };
-    /* Earth's magnetic field. It's probably a good idea to estimate this
-     * slightly low so that extreme values get more rapidly rejected. */
-    const int EXPECTED_MAGNETIC_FIELD_UT = 40;
-    /* Stop moving bound if it's closer than this value from measurement.
-     * 4 follows from 1/16, the 1 from the fact that maximum expected distance
-     * is twice the field strength. Is estimate of field's value sufficient?
-     * It might be safer to use slightly lower value, and compensate by doing
-     * the decay slower. */
-    const int BELIEVABLE_BOUND = EXPECTED_MAGNETIC_FIELD_UT << (4 + 1);
-
-    //LOGI("a=(%d %d %d), m=(%d %d %d)", a[0], a[1], a[2], m[0], m[1], m[2]);
-    int i;
-    for (i = 0; i < 3; i ++) {
-        /* Analog clipping handling */
-        if (m[i] == 127 || m[i] == -128) {
-            calibrate_analog(i, m[i] == 127 ? -1 : 1);
-        }
-
-        m[i] = m[i] * digital_gain[i] >> 12;
-        /* 1/16 uT */
-
-        /* minimum value seen */
-        if (calibrate_min[i] > m[i]) {
-            calibrate_min[i] = m[i];
-        }
-        /* maximum value seen */
-        if (calibrate_max[i] < m[i]) {
-            calibrate_max[i] = m[i];
-        }
-
-        /* gradually move too large-seeming minimum closer to the current
-         * measurement point. This compensates for temperature-dependent
-         * drifts and recovers after close encounters of magnetic kind. */
-        if (m[i] > calibrate_min[i] + BELIEVABLE_BOUND) {
-            calibrate_min[i] += 1;
-        }
-        if (m[i] < calibrate_max[i] - BELIEVABLE_BOUND) {
-            calibrate_max[i] -= 1;
-        }
-
-        /* Apply current estimate of the midpoint correction adjustment. */
-        int correction = (calibrate_max[i] + calibrate_min[i]) >> 1;
-        m[i] -= correction;
-    }
-
-    /* We should also estimate the analog gain from examining the value
-     * range in x, y and z directions, and assume that the magnetic field
-     * being measured is the Earth's magnetic field and try to adjust
-     * gain such that it gives 45. This could be seen to be cheating.
-     * The alternative is to force ROM vendors to supply reasonable gain
-     * values. */
-}
-
+/****************************************************************************/
+/* Some vector utilities                                                    */
+/****************************************************************************/
 static void cross_product(int *a, float *b, float *c)
 {
     c[0] = a[1] * b[2] - a[2] * b[1];
@@ -153,8 +68,182 @@ static float length_i(int *a)
     return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
 }
 
+/****************************************************************************/
+/* Analog calibration                                                       */
+/****************************************************************************/
+static void calibrate_analog_apply()
+{
+    char params[6] = {
+        analog_offset[0], analog_offset[1], analog_offset[2],
+        fixed_analog_gain, fixed_analog_gain, fixed_analog_gain,
+    };
+
+    int i;
+    for (i = 0; i < 6; i ++) {
+        char rwbuf[5] = { 2, 0xe1+i, params[i], 0, 0 };
+        if (ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) != 0) {
+            perror("Failed to write analog controls\n");
+            _exit(3);
+        }
+    }
+
+    for (i = 0; i < 3; i ++) {
+        int g = analog_gain[i];
+        digital_gain[i] = powf(10.0f, (g - fixed_analog_gain) * 0.4f / 20.0f) * 65536.0f;
+    }
+}
+
+void calibrate_analog(int *m)
+{
+    int i;
+    for (i = 0; i < 3; i ++) {
+        /* Analog clipping handling */
+        if (m[i] == 127 || m[i] == -128) {
+            analog_offset[i] += m[i] == 127 ? -1 : 1;
+            calibrate_analog_apply();
+        }
+    }
+}
+
+/****************************************************************************/
+/* Digital calibration                                                      */
+/****************************************************************************/
+static void calibrate_digital_rough(int *m, int *rc)
+{
+    int i;
+    const int CALIBRATE_DECAY = 8;
+    static int rc_min[3] = { 0, 0, 0 };
+    static int rc_max[3] = { 0, 0, 0 };
+
+    for (i = 0; i < 3; i ++) {
+        m[i] = m[i] * digital_gain[i] >> 12;
+
+        /* gradually shrink ther angles */
+        rc_min[i] += 1;
+        rc_max[i] -= 1;
+
+        /* minimum value seen */
+        int value = m[i] << CALIBRATE_DECAY;
+        if (rc_min[i] > value) {
+            rc_min[i] = value;
+        }
+
+        /* maximum value seen */
+        if (rc_max[i] < value) {
+            rc_max[i] = value;
+        }
+
+        rc[i] = (rc_min[i] + rc_max[i]) >> (1 + CALIBRATE_DECAY);
+    }
+}
+
+#define PCR 5
+static void calibrate_digital_fine_update(int pc[PCR][PCR][3], int *m, int *rc)
+{
+    /* Record current sample at point cloud using the rough estimate to
+     * determine which bin to put the precise measurement in. */
+    int rm[3] = {
+        m[0] - rc[0],
+        m[1] - rc[1],
+        m[2] - rc[2],
+    };
+    int pitch = PCR * 0.5f * (1.0f + atan2f(rm[1], rm[0]) / (float) M_PI);
+    int roll  = PCR * acosf(rm[2] / length_i(rm)) / (float) M_PI;
+
+    if (pitch < 0) {
+        pitch = 0;
+    }
+    if (pitch > PCR-1) {
+        pitch = PCR-1;
+    }
+    if (roll < 0) {
+        roll = 0;
+    }
+    if (roll > PCR-1) {
+        roll = PCR-1;
+    }
+  
+    int *pos = pc[pitch][roll];
+    pos[0] = m[0];
+    pos[1] = m[1];
+    pos[2] = m[2];
+}
+
+static float calibrate_digital_fine_fit_eval(int pc[PCR][PCR][3], float x, float y, float z, float r)
+{
+    int i, j;
+
+    float error = 0;
+    for (i = 0; i < PCR; i ++) {
+        for (j = 0; j < PCR; j ++) {
+            int *v = pc[i][j];
+
+            float dx = v[0] - x;
+            float dy = v[1] - y;
+            float dz = v[2] - z;
+
+            float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
+            error += d * d;
+        }
+    }
+    return sqrtf(error);
+}
+
+static void calibrate_digital_fine_fit(int pc[PCR][PCR][3], float *fc)
+{
+    /* Region to use for derivate estimation, 16 = 1 uT */
+    const float d = 16;
+
+    float x = fc[0];
+    float y = fc[1];
+    float z = fc[2];
+    float r = fc[3];
+
+    float error = calibrate_digital_fine_fit_eval(pc, x, y, z, r);
+    float dx = calibrate_digital_fine_fit_eval(pc, x+d, y, z, r) - error;
+    float dy = calibrate_digital_fine_fit_eval(pc, x, y+d, z, r) - error;
+    float dz = calibrate_digital_fine_fit_eval(pc, x, y, z+d, r) - error;
+    float dr = calibrate_digital_fine_fit_eval(pc, x, y, z, r+d) - error;
+
+    /* Steepest descent */
+    if (dx != 0) {
+        fc[0] -= dx/d;
+    }
+    if (dy != 0) {
+        fc[1] -= dy/d;
+    }
+    if (dz != 0) {
+        fc[2] -= dz/d;
+    }
+    if (dr != 0) {
+        fc[3] -= dr/d;
+    }
+}
+
+static void calibrate_digital(int *m)
+{
+    /* Get approximate calibration data for sphere fitting algorithm. */
+    static int rough_calibration[3];
+    calibrate_digital_rough(m, rough_calibration);
+
+    /* Use sphere fitting algorithm to do finer calibration. */
+    static int point_cloud[PCR][PCR][3];
+    static float fine_calibration[4] = { 0, 0, 0, 0 };
+    calibrate_digital_fine_update(point_cloud, m, rough_calibration);
+    calibrate_digital_fine_fit(point_cloud, fine_calibration);
+
+    /* Adjust magnetic. */
+    m[0] -= fine_calibration[0];
+    m[1] -= fine_calibration[1];
+    m[2] -= fine_calibration[2];
+}
+
+/****************************************************************************/
+/* Sensor output calculation                                                */
+/****************************************************************************/
 static void build_result_vector(int *a, short temperature, int *m, short *out)
 {
+    calibrate_analog(m);
     calibrate_digital(m);
  
     /*
@@ -170,7 +259,8 @@ static void build_result_vector(int *a, short temperature, int *m, short *out)
      */
 
     /* From a, we need to discover 2 suitable vectors. Cross product
-     * is used to establish orthogonal basis in E. */
+     
+* is used to establish orthogonal basis in E. */
     float o1[3];
     float ref[3] = { 0, -1, 0 };
     cross_product(a, ref, o1);
@@ -203,6 +293,9 @@ static void build_result_vector(int *a, short temperature, int *m, short *out)
     out[11] = -m[2];
 }
 
+/****************************************************************************/
+/* Raw mechanics of sensor reading                                          */
+/****************************************************************************/
 static state_t readLoop()
 {
     {
@@ -318,6 +411,9 @@ static state_t sleepLoop()
         }
         return READ;
     }
+
+    /* Refresh state 1 per second nevertheless. */
+    readLoop();
 
     interval.tv_sec = 1;
     interval.tv_nsec = 0;
