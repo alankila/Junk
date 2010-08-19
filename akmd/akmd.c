@@ -142,7 +142,7 @@ static void calibrate_digital_rough(int *m, int *rc)
     }
 }
 
-#define PCR (64)
+#define PCR (16)
 static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
 {
     /* Record current sample at point cloud using the rough estimate to
@@ -157,8 +157,8 @@ static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
     int len = (int) length_i(rm) / 4 + 1;
     rm[0] /= len;
     rm[1] /= len;
-    rm[2] /= len;
-    int idx = ((rm[0] & 3) << 4) | ((rm[1] & 3) << 2) | (rm[2] & 3);
+    /* 3rd vector is not independent because we are normalized. */
+    int idx = ((rm[0] & 3) << 2) | (rm[1] & 3);
 
     int *pos = pc[idx];
     pos[0] = m[0];
@@ -187,7 +187,7 @@ static float calibrate_digital_fine_fit_eval(int pc[][3], float x, float y, floa
 static void calibrate_digital_fine_fit(int pc[][3], float *fc)
 {
     /* Region to use for derivate estimation, 16 = 1 uT */
-    const float d = 16;
+    const float d = 1;
 
     float x = fc[0];
     float y = fc[1];
@@ -230,15 +230,17 @@ static void calibrate_digital(int *m)
 /****************************************************************************/
 static void estimate_earth(int *a, int *m, int *g)
 {
+    int i;
     /* When device is not being accelerated, g = a is true. However, when
      * device is being accelerated, we should check acceleration against the
      * magnetometer to differentiate rotation of device (where field vector
      * is turning also) from changes in position (where magnetic field is
      * unchanged).
      */
-    g[0] = a[0];
-    g[1] = a[1];
-    g[2] = a[2];
+
+    for (i = 0; i < 3; i ++) {
+        g[i] = a[i];
+    }
 }
 
 static void build_result_vector(int *a, short temperature, int *m, short *out)
