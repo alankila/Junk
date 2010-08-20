@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -49,8 +50,8 @@ static int analog_gain[3];
 static int analog_offset[3];
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
-#define ioctl_ok(...)\
-    do { if (ioctl(__VA_ARGS__) != 0) {                                    \
+#define succeed(...)\
+    do { if ((__VA_ARGS__) != 0) {                                         \
         LOGI(__FILE__ " ioctl on line %d: %s", __LINE__, strerror(errno)); \
         exit(1);                                                           \
     } } while (0)
@@ -98,7 +99,7 @@ static void calibrate_analog_apply()
     int i;
     for (i = 0; i < 6; i ++) {
         char rwbuf[5] = { 2, 0xe1+i, params[i], 0, 0 };
-        ioctl_ok(akm_fd, ECS_IOCTL_WRITE, &rwbuf);
+        succeed(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf));
     }
 
     for (i = 0; i < 3; i ++) {
@@ -309,7 +310,7 @@ void sleep_until_next_update()
 {
     /* Get time until next update. */
     unsigned short delay;
-    ioctl_ok(akm_fd, ECS_IOCTL_GET_DELAY, &delay);
+    succeed(ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay));
 
 /* Automatic sampling rate adapation. The code is disabled because
  * the BMA150 chip's measurement is really pretty noisy. Enabling this
@@ -327,74 +328,74 @@ void sleep_until_next_update()
     }
 
     char rwbuf[8] = { 2, RANGE_BWIDTH_REG, 0 };
-    ioctl_ok(bma150_fd, BMA_IOCTL_READ, &rwbuf);
+    succeed(ioctl(bma150_fd, BMA_IOCTL_READ, &rwbuf));
     rwbuf[2] = (rwbuf[1] & 0xf8) | bma_delay_value;
     rwbuf[1] = RANGE_BWIDTH_REG;
-    ioctl_ok(bma150_fd, BMA_IOCTL_WRITE, &rwbuf);
+    succeed(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf));
 #endif
 
     /* Find out how long to sleep so that we achieve true periodic tick. */ 
-    if (gettimeofday(&current_time, NULL) != 0) {
-        perror("Failed to read time");
-        _exit(1);
-    }
+    succeed(gettimeofday(&current_time, NULL));
     next_update.tv_usec += delay * 1000;
     next_update.tv_sec += next_update.tv_usec / 1000000;
     next_update.tv_usec %= 1000000;
 
-    int sleep_time = (next_update.tv_sec - current_time.tv_sec) * 1000000
-                    + (next_update.tv_usec - current_time.tv_usec);
+    int sleep_time = (next_update.tv_sec - current_time.tv_sec) * 1000
+                    + (next_update.tv_usec - current_time.tv_usec) / 1000;
     if (sleep_time < 0) {
-        /* Have we fallen behind by more than one update? Complain & reset. */
-        if (sleep_time < -delay * 1000) {
-            LOGI("scheduling glitch: akmd scheduled %d us too late", -sleep_time);
+        /* Have we fallen behind by more than one update? Resync.
+         * I'm going to be silent about this, because these things happen
+         * every now and then, and it isn't horribly destructive. */
+        if (sleep_time < -delay) {
             next_update = current_time;
         }
         return;
     }
 
     struct timespec interval = {
-        .tv_sec = sleep_time / 1000000,
-        .tv_nsec = 1000 * (sleep_time % 1000000),
+        .tv_sec = sleep_time / 1000,
+        .tv_nsec = 1000000 * (sleep_time % 1000),
     };
-    nanosleep(&interval, NULL);
+    succeed(nanosleep(&interval, NULL));
 }
 
 static void readLoop()
 {
+    /* This ioctl sleeps if the control channel isn't open, so we can use
+     * this to pause ourselves. Another thread shuts down the BMA150 chip.
+     * AKM 8973 will sleep when not being measured anyway. */
     int status;
-    /* This ioctl sleeps if the control channel isn't open. Therefore
-     * the return value tends to always indicate open channel. Stupid. */
-    ioctl_ok(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status);
+    succeed(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status));
 
     /* Measuring puts readable state to 0. It is going to take
      * some time before the values are ready. */
     short amode = AKECS_MODE_MEASURE;
-    ioctl_ok(akm_fd, ECS_IOCTL_SET_MODE, &amode);
+    succeed(ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode));
 
+    /* BMA150 is constantly measuring and filtering, so it never sleeps.
+     * The ioctl in truth returns only 3 values, but buffer in kernel is
+     * defined as 8 shorts long. */
     int a[3];
-    /* I'd like to put BMA150 to sleep outside immediate measurement,
-     * but that is fairly difficult to do. Sigh. */
     short bma150_data[8];
-    ioctl_ok(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data);
+    succeed(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data));
     a[0] = bma150_data[0];
     a[1] = -bma150_data[1];
     a[2] = bma150_data[2];
 
     /* Significance and range of values can be extracted from
-     * online AK 8973 manual. The kernel driver is dumb. */
+     * online AK 8973 manual. The kernel driver just passes the data on. */
     int m[3];
     char akm_data[5];
-    ioctl_ok(akm_fd, ECS_IOCTL_GETDATA, &akm_data);
+    succeed(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data));
     short temperature = (signed char) -(akm_data[1] + temperature_zero);
     m[0] = 127 - (unsigned char) akm_data[2];
     m[1] = 127 - (unsigned char) akm_data[3];
     m[2] = 127 - (unsigned char) akm_data[4];
 
+    /* Calculate and set data readable on compass input. */
     short final_data[12];
     build_result_vector(a, temperature, m, final_data);
-    /* Set data readable on compass input. */
-    ioctl_ok(akm_fd, ECS_IOCTL_SET_YPR, &final_data);
+    succeed(ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data));
 
     sleep_until_next_update();
 }
@@ -406,8 +407,7 @@ static void open_fds()
         perror("Failed to open " AKM_NAME);
         _exit(1);
     }
-    short amode = AKECS_MODE_POWERDOWN;
-    ioctl_ok(akm_fd, ECS_IOCTL_SET_MODE, &amode);
+    succeed(ioctl(akm_fd, ECS_IOCTL_RESET, NULL));
     calibrate_analog_apply();
 
     bma150_fd = open(BMA150_NAME, O_RDONLY);
@@ -415,10 +415,25 @@ static void open_fds()
         perror("Failed to open " BMA150_NAME);
         _exit(1);
     }
-    ioctl_ok(bma150_fd, BMA_IOCTL_INIT, NULL);
-    
-    char bmode = BMA_MODE_NORMAL;
-    ioctl_ok(bma150_fd, BMA_IOCTL_SET_MODE, &bmode);
+    succeed(ioctl(bma150_fd, BMA_IOCTL_INIT, NULL));
+}
+
+void *aot_tracking_thread(void *arg)
+{
+    while (1) {
+        int status;
+        char bmode;
+
+        /* When open, we enable BMA and wait for close event. */
+        succeed(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status));
+        bmode = BMA_MODE_NORMAL;
+        succeed(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode));
+
+        /* When closed, we disable BMA and wait for open event. */
+        succeed(ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status));
+        bmode = BMA_MODE_SLEEP;
+        succeed(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode));
+    }
 }
 
 int main(int argc, char **argv)
@@ -457,10 +472,10 @@ int main(int argc, char **argv)
     temperature_zero = atoi(argv[7]);
  
     open_fds();
-    if (gettimeofday(&next_update, NULL) != 0) {
-        perror("Failed to read time");
-        _exit(1);
-    }
+    succeed(gettimeofday(&next_update, NULL));
+
+    pthread_t thread_id;
+    succeed(pthread_create(&thread_id, NULL, aot_tracking_thread, NULL));
     while (1) {
         readLoop();
     }
