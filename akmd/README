@@ -72,6 +72,13 @@ If the device lays on its left edge, the x acceleration is reported negative.
 However, if the device is in the portrait orientation, y is reported as
 positive. Therefore, the y axis is inverted by akmd to conform to the DCS.
 
+The accelerometer samples data internally 3000 times per second. A fixed
+analog filter cuts the sampling rate down to 1500 Hz, and then a 64-tap
+boxcar filter is used to drop sampling rate to about 23 Hz. Reducing the
+length of the digital filter appears to increase visible errors considerably,
+however using higher sampling rates and better filters on akmd side would
+probably improve the sensor's results nevertheless.
+
 Magnetic sensor
 ---------------
 
@@ -121,9 +128,6 @@ position flips the needle around, whereas rolling the device does not.
 These are simply bugs that need to be fixed.
 
 Pitch and roll are estimated from accelerometer by performing
-spherical-to-cartesian transformation. Some low-pass filtering for the
-accelerometer would be good to improve the stability of these estimates.
-
-Besides low-pass filtering the accelerometer data, the responsivity of the
-controls could be improved by estimating device's rotation from the magnetic
-field vector and modify the pitch and roll quicker based on this.
+spherical-to-cartesian transformation. Currently magnetometer reading is not
+yet considered, therefore making distinguishing between acceleration and
+gravity impossible. This is subject of future work.
