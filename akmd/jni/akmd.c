@@ -404,6 +404,9 @@ void sleep_until_next_update()
     rwbuf[1] = RANGE_BWIDTH_REG;
     SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
 #endif
+    if (delay == 0) {
+        return;
+    }
 
     /* Find out how long to sleep so that we achieve true periodic tick. */ 
     SUCCEED(gettimeofday(&current_time, NULL) == 0);
