@@ -12,6 +12,7 @@
  * copy of results is periodically updated to the /dev/input node "compass"
  * using an ioctl on the akm8973_daemon.
  */
+#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
@@ -48,6 +49,11 @@ static int analog_gain[3];
 static int analog_offset[3];
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
+#define ioctl_ok(...)\
+    do { if (ioctl(__VA_ARGS__) != 0) {                                    \
+        LOGI(__FILE__ " ioctl on line %d: %s", __LINE__, strerror(errno)); \
+        exit(1);                                                           \
+    } } while (0)
 
 /****************************************************************************/
 /* Some vector utilities                                                    */
@@ -92,10 +98,7 @@ static void calibrate_analog_apply()
     int i;
     for (i = 0; i < 6; i ++) {
         char rwbuf[5] = { 2, 0xe1+i, params[i], 0, 0 };
-        if (ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) != 0) {
-            perror("Failed to write analog controls\n");
-            _exit(3);
-        }
+        ioctl_ok(akm_fd, ECS_IOCTL_WRITE, &rwbuf);
     }
 
     for (i = 0; i < 3; i ++) {
@@ -306,15 +309,34 @@ void sleep_until_next_update()
 {
     /* Get time until next update. */
     unsigned short delay;
-    if (ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) != 0) {
-         perror("akm8973: Failed to GET_DELAY");
-        _exit(30);
+    ioctl_ok(akm_fd, ECS_IOCTL_GET_DELAY, &delay);
+
+/* Automatic sampling rate adapation. The code is disabled because
+ * the BMA150 chip's measurement is really pretty noisy. Enabling this
+ * is appropriate only if it gets better smoothed by us. */
+#if 0
+    /* Number of updates we want per second.
+     * 6 = 1500, 5 = 750, 4 = 375, etc. Chosen sample rate is
+     * always equal or the nearest lower rate to what app wanted. */
+    int required_sample_rate = delay != 0 ? 1000 / delay : 1500;
+    int bma_delay_value = 6;
+    int bma_delay_rate = 1500;
+    while (bma_delay_value > 0 && required_sample_rate <= bma_delay_value) {
+        bma_delay_value /= 2;
+        bma_delay_value --;
     }
+
+    char rwbuf[8] = { 2, RANGE_BWIDTH_REG, 0 };
+    ioctl_ok(bma150_fd, BMA_IOCTL_READ, &rwbuf);
+    rwbuf[2] = (rwbuf[1] & 0xf8) | bma_delay_value;
+    rwbuf[1] = RANGE_BWIDTH_REG;
+    ioctl_ok(bma150_fd, BMA_IOCTL_WRITE, &rwbuf);
+#endif
 
     /* Find out how long to sleep so that we achieve true periodic tick. */ 
     if (gettimeofday(&current_time, NULL) != 0) {
         perror("Failed to read time");
-        _exit(31);
+        _exit(1);
     }
     next_update.tv_usec += delay * 1000;
     next_update.tv_sec += next_update.tv_usec / 1000000;
@@ -323,7 +345,7 @@ void sleep_until_next_update()
     int sleep_time = (next_update.tv_sec - current_time.tv_sec) * 1000000
                     + (next_update.tv_usec - current_time.tv_usec);
     if (sleep_time < 0) {
-        /* Have we fallen behind by more than one update? Reset. */
+        /* Have we fallen behind by more than one update? Complain & reset. */
         if (sleep_time < -delay * 1000) {
             LOGI("scheduling glitch: akmd scheduled %d us too late", -sleep_time);
             next_update = current_time;
@@ -340,73 +362,39 @@ void sleep_until_next_update()
 
 static void readLoop()
 {
-    {
-        /* akm8973.c sleeps when we do this if nobody has device open. */
-        int status;
-        if (ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) != 0) {
-            perror("akm8973: Failed to query control channel (aot) open count");
-            _exit(10);
-        }
-    }
+    int status;
+    /* This ioctl sleeps if the control channel isn't open. Therefore
+     * the return value tends to always indicate open channel. Stupid. */
+    ioctl_ok(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status);
 
     /* Measuring puts readable state to 0. It is going to take
      * some time before the values are ready. */
-    {
-        short amode = AKECS_MODE_MEASURE;
-        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
-            perror("akm8973: Failed to SET_MODE=READ");
-            _exit(11);
-        }
-    }
+    short amode = AKECS_MODE_MEASURE;
+    ioctl_ok(akm_fd, ECS_IOCTL_SET_MODE, &amode);
 
     int a[3];
-    {
-        //char bmode = BMA_MODE_NORMAL;
-        //if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
-        //    perror("bma150: Failed to SET_MODE=NORMAL");
-        //    _exit(12);
-        //}
-        /* Significance and range of values can be extracted from bma150.c. */
-        short bma150_data[8];
-        if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
-            perror("bma150: Failed to READ_ACCELERATION");
-            _exit(13);
-        }
-        a[0] = bma150_data[0];
-        a[1] = -bma150_data[1];
-        a[2] = bma150_data[2];
-
-        //bmode = BMA_MODE_SLEEP;
-        //if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
-        //    perror("bma150: Failed to SET_MODE=SLEEP");
-        //    _exit(14);
-        //}
-    }
+    /* I'd like to put BMA150 to sleep outside immediate measurement,
+     * but that is fairly difficult to do. Sigh. */
+    short bma150_data[8];
+    ioctl_ok(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data);
+    a[0] = bma150_data[0];
+    a[1] = -bma150_data[1];
+    a[2] = bma150_data[2];
 
     /* Significance and range of values can be extracted from
      * online AK 8973 manual. The kernel driver is dumb. */
-    short temperature;
     int m[3];
-    {
-        char akm_data[5];
-        if (ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) != 0) {
-            perror("akm8973: Failed to GETDATA");
-            _exit(15);
-        }
-        temperature = (signed char) -(akm_data[1] + temperature_zero);
-        m[0] = 127 - (unsigned char) akm_data[2];
-        m[1] = 127 - (unsigned char) akm_data[3];
-        m[2] = 127 - (unsigned char) akm_data[4];
-    }
+    char akm_data[5];
+    ioctl_ok(akm_fd, ECS_IOCTL_GETDATA, &akm_data);
+    short temperature = (signed char) -(akm_data[1] + temperature_zero);
+    m[0] = 127 - (unsigned char) akm_data[2];
+    m[1] = 127 - (unsigned char) akm_data[3];
+    m[2] = 127 - (unsigned char) akm_data[4];
 
     short final_data[12];
     build_result_vector(a, temperature, m, final_data);
-
-    /* Put data to be readable from compass input. */
-    if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
-        perror("bma150: Failed to SET_YPR={akm data}");
-        _exit(16);
-    }
+    /* Set data readable on compass input. */
+    ioctl_ok(akm_fd, ECS_IOCTL_SET_YPR, &final_data);
 
     sleep_until_next_update();
 }
@@ -419,25 +407,18 @@ static void open_fds()
         _exit(1);
     }
     short amode = AKECS_MODE_POWERDOWN;
-    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
-        perror("akm8973: SET_MODE=POWERDOWN");
-        _exit(2);
-    }
+    ioctl_ok(akm_fd, ECS_IOCTL_SET_MODE, &amode);
+    calibrate_analog_apply();
 
     bma150_fd = open(BMA150_NAME, O_RDONLY);
     if (bma150_fd == -1) {
         perror("Failed to open " BMA150_NAME);
-        _exit(4);
+        _exit(1);
     }
-    if (ioctl(bma150_fd, BMA_IOCTL_INIT, NULL) != 0) {
-        perror("bma150: INIT");
-        _exit(5);
-    }
+    ioctl_ok(bma150_fd, BMA_IOCTL_INIT, NULL);
+    
     char bmode = BMA_MODE_NORMAL;
-    if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
-        perror("bma150: SET_MODE=NORMAL");
-        _exit(5);
-    }
+    ioctl_ok(bma150_fd, BMA_IOCTL_SET_MODE, &bmode);
 }
 
 int main(int argc, char **argv)
@@ -456,7 +437,7 @@ int main(int argc, char **argv)
         printf("Per-axis gain needs to be calibrated per device.\n");
         printf("The Earth's magnetic field is approximately 45 uT and should\n");
         printf("read the same in every orientation of device.\n");
-        _exit(100);
+        _exit(1);
     }
 
     /* args 1 .. 3, 4 .. 6 */
@@ -476,10 +457,9 @@ int main(int argc, char **argv)
     temperature_zero = atoi(argv[7]);
  
     open_fds();
-    calibrate_analog_apply();
     if (gettimeofday(&next_update, NULL) != 0) {
         perror("Failed to read time");
-        _exit(101);
+        _exit(1);
     }
     while (1) {
         readLoop();
