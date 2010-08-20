@@ -91,6 +91,16 @@ static float length_i(int *a)
 /****************************************************************************/
 /* Analog calibration                                                       */
 /****************************************************************************/
+static void recalculate_digital_gain()
+{
+    int i;
+    for (i = 0; i < 3; i ++) {
+        /* 0.4 dB per step */
+        digital_gain[i] = 65536.0f
+            * powf(10.0f, (analog_gain[i] - fixed_analog_gain) * 0.4f / 20.0f);
+    }
+}
+
 static void calibrate_analog_apply()
 {
     char params[6] = {
@@ -102,11 +112,6 @@ static void calibrate_analog_apply()
     for (i = 0; i < 6; i ++) {
         char rwbuf[5] = { 2, 0xe1+i, params[i], 0, 0 };
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) == 0);
-    }
-
-    for (i = 0; i < 3; i ++) {
-        int g = analog_gain[i];
-        digital_gain[i] = powf(10.0f, (g - fixed_analog_gain) * 0.4f / 20.0f) * 65536.0f;
     }
 }
 
@@ -152,6 +157,7 @@ static void calibrate_digital_rough(int *m, int *rc)
             }
             
             calibrate_analog_apply();
+            recalculate_digital_gain();
             break;
         }
         
@@ -262,6 +268,7 @@ static int calibrate(int *m)
     static float fine_calibration[4] = { 0, 0, 0, 0 };
     calibrate_digital_fine_update(point_cloud, m, rough_calibration);
     float error = calibrate_digital_fine_fit(point_cloud, fine_calibration);
+    //LOGI("Spherical fit error: %f", error);
 
     /* Adjust magnetic from 8 bit measurement to final value */
     for (i = 0; i < 3; i ++) {
@@ -511,6 +518,8 @@ int main(int argc, char **argv)
     temperature_zero = atoi(argv[7]);
  
     open_fds();
+    calibrate_analog_apply();
+    recalculate_digital_gain();
     SUCCEED(gettimeofday(&next_update, NULL) == 0);
 
     pthread_t thread_id;
