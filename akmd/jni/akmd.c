@@ -21,10 +21,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <utils/Log.h>
+#include <android/log.h>
 
-#include "akm8973.h"
-#include "bma150.h"
+#include <linux-2.6.29/akm8973.h>
+#include <linux-2.6.29/bma150.h>
 
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
@@ -46,6 +46,8 @@ static int digital_gain[3];
 static int analog_gain[3];
 /* The user requested analog offset */
 static int analog_offset[3];
+
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
 
 /****************************************************************************/
 /* Some vector utilities                                                    */
