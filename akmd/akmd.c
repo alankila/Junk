@@ -16,6 +16,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -28,9 +29,13 @@
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
 
+static struct timeval current_time;
+static struct timeval next_update;
+
 static int akm_fd, bma150_fd;
 
 typedef enum { READ, SLEEP } state_t;
+static char *axis_labels[] = { "X", "Y", "Z" };
 
 /* Temperature is value - zero. */
 static char temperature_zero = 0;
@@ -105,6 +110,7 @@ void calibrate_analog(int *m)
         /* Analog clipping handling */
         if (m[i] == 127 || m[i] == -128) {
             analog_offset[i] += m[i] == 127 ? -1 : 1;
+            LOGI("Adjusted analog axis %s to %d", axis_labels[i], analog_offset[i]);
             calibrate_analog_apply();
         }
     }
@@ -295,11 +301,47 @@ static void build_result_vector(int *a, short temperature, int *m, short *out)
 /****************************************************************************/
 /* Raw mechanics of sensor reading                                          */
 /****************************************************************************/
+void sleep_until_next_update()
+{
+    /* Get time until next update. */
+    unsigned short delay;
+    if (ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) != 0) {
+         perror("akm8973: Failed to GET_DELAY");
+        _exit(30);
+    }
+
+    /* Find out how long to sleep so that we achieve true periodic tick. */ 
+    if (gettimeofday(&current_time, NULL) != 0) {
+        perror("failed to read time");
+        _exit(31);
+    }
+    next_update.tv_usec += delay * 1000;
+    next_update.tv_sec += next_update.tv_usec / 1000000;
+    next_update.tv_usec %= 1000000;
+
+    int sleep_time = (next_update.tv_sec - current_time.tv_sec) * 1000000
+                    + (next_update.tv_usec - current_time.tv_usec);
+    if (sleep_time < 0) {
+        /* Have we fallen behind by more than one update? Reset. */
+        if (sleep_time < -delay * 1000) {
+            LOGI("scheduling glitch: akmd scheduled %d us too late", -sleep_time);
+            next_update = current_time;
+        }
+        return;
+    }
+
+    struct timespec interval = {
+        .tv_sec = sleep_time / 1000000,
+        .tv_nsec = 1000 * (sleep_time % 1000000),
+    };
+    nanosleep(&interval, NULL);
+}
+
 static state_t readLoop()
 {
     {
-        unsigned int status;
-        if (ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) != 0) {
+        int status;
+        if (ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) != 0) {
             perror("akm8973: Failed to query control channel (aot) open count");
             _exit(10);
         }
@@ -309,14 +351,15 @@ static state_t readLoop()
             short amode = AKECS_MODE_POWERDOWN;
             if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
                 perror("akm8973: Failed to SET_MODE=POWERDOWN");
-                _exit(11);
+                _exit(12);
             }
             char bmode = BMA_MODE_SLEEP;
             if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
                 perror("bma150: Failed to SET_MODE=SLEEP");
-                _exit(12);
+                _exit(13);
             }
 
+            LOGI("Going to sleep.");
             return SLEEP;
         }
     }
@@ -327,7 +370,7 @@ static state_t readLoop()
         short mode = AKECS_MODE_MEASURE;
         if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
             perror("akm8973: Failed to SET_MODE=READ");
-            _exit(13);
+            _exit(14);
         }
     }
 
@@ -337,7 +380,7 @@ static state_t readLoop()
         short bma150_data[8];
         if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
             perror("bma150: Failed to READ_ACCELERATION");
-            _exit(14);
+            _exit(15);
         }
         a[0] = bma150_data[0];
         a[1] = -bma150_data[1];
@@ -345,14 +388,14 @@ static state_t readLoop()
     }
 
     /* Significance and range of values can be extracted from
-     * online AKM 8973 manual. The kernel driver is dumb. */
+     * online AK 8973 manual. The kernel driver is dumb. */
     short temperature;
     int m[3];
     {
         char akm_data[5];
         if (ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) != 0) {
             perror("akm8973: Failed to GETDATA");
-            _exit(15);
+            _exit(16);
         }
         temperature = (signed char) -(akm_data[1] + temperature_zero);
         m[0] = 127 - (unsigned char) akm_data[2];
@@ -366,25 +409,10 @@ static state_t readLoop()
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
         perror("bma150: Failed to SET_YPR={akm data}");
-        _exit(16);
-    }
-
-    /* Get time until next update. */
-    unsigned short delay;
-    if (ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) != 0) {
-         perror("akm8973: Failed to GET_DELAY");
         _exit(17);
     }
 
-    /* We could actually use gettimeofday when we start to
-     * achieve truly periodic timer tick. Right now we really
-     * sleep for interval + processing time. */
-    struct timespec interval = {
-        .tv_sec = delay / 1000,
-        .tv_nsec = 1000000 * (delay % 1000),
-    };
-    nanosleep(&interval, NULL);
-
+    sleep_until_next_update();
     return READ;
 }
 
@@ -398,11 +426,16 @@ static state_t sleepLoop()
     }
 
     if (status != 0) {
+        LOGI("Starting periodic updates.");
         char mode = BMA_MODE_NORMAL;
         // akm device is woken by readLoop().
         if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
             perror("bma150: Failed to SET_MODE=NORMAL");
             _exit(21);
+        }
+        if (gettimeofday(&next_update, NULL) != 0) {
+            perror("failed to read time");
+            _exit(22);
         }
         return READ;
     }
@@ -455,17 +488,17 @@ int main(int argc, char **argv)
     int i;
    
     if (argc != 8) {
-        fprintf(stderr, "Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <tz>\n");
-        fprintf(stderr, "\n");
-        fprintf(stderr, "flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i), where\n");
-        fprintf(stderr, "  h(i) = -128 .. 127\n");
-        fprintf(stderr, "  g(i) = 0 .. 15\n");
-        fprintf(stderr, "  a, b = internal scaling parameters\n");
-        fprintf(stderr, "\n");
-        fprintf(stderr, "Attention ROM makers. The analog parameters hx, hy and hz can be left at 0.\n");
-        fprintf(stderr, "Per-axis gain needs to be calibrated per device.\n");
-        fprintf(stderr, "The Earth's magnetic field is approximately 45 uT and should\n");
-        fprintf(stderr, "read the same in every orientation of device.\n");
+        printf("Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <tz>\n");
+        printf("\n");
+        printf("flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i), where\n");
+        printf("  h(i) = -128 .. 127\n");
+        printf("  g(i) = 0 .. 15\n");
+        printf("  a, b = internal scaling parameters\n");
+        printf("\n");
+        printf("Attention ROM makers. The analog parameters hx, hy and hz can be left at 0.\n");
+        printf("Per-axis gain needs to be calibrated per device.\n");
+        printf("The Earth's magnetic field is approximately 45 uT and should\n");
+        printf("read the same in every orientation of device.\n");
         _exit(100);
     }
 
