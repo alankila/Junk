@@ -22,6 +22,13 @@ public class MagneticFlux extends Activity {
 	private int minX, maxX, minY, maxY, minZ, maxZ;
 	
 	private final SensorEventListener sensorListener = new SensorEventListener() {
+		
+		private int accuracy;
+		
+		private final String[] accuracyStrings = new String[] {
+			"> 8", "4-8", "2-4", "< 2"
+		};
+
 		@Override
 		public void onAccuracyChanged(Sensor sensor, int accuracy) {
 		}
@@ -55,7 +62,7 @@ public class MagneticFlux extends Activity {
 			xz.putPixel(x, z);
 			yz.putPixel(y, z);
 			
-			field.setText(String.format("%.0f uT", Math.sqrt(x * x + y * y + z * z)));
+			field.setText(String.format("%.0f uT with %s uT error", Math.sqrt(x * x + y * y + z * z), accuracyStrings[accuracy]));
 			boundX.setText(String.format("X: %+3d - %+3d uT, center %+3d", minX, maxX, (minX + maxX) / 2));
 			boundY.setText(String.format("Y: %+3d - %+3d uT, center %+3d", minY, maxY, (minY + maxY) / 2));
 			boundZ.setText(String.format("Z: %+3d - %+3d uT, center %+3d", minZ, maxZ, (minZ + maxZ) / 2));
@@ -98,8 +105,8 @@ public class MagneticFlux extends Activity {
 				minZ = 0;
 				maxZ = 0;
 				
-		    	Sensor sensor = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
-		        sm.registerListener(sensorListener, sensor, SensorManager.SENSOR_DELAY_GAME);
+		    	Sensor sensor_m = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
+		        sm.registerListener(sensorListener, sensor_m, SensorManager.SENSOR_DELAY_GAME);
 			}
         });
 
@@ -112,8 +119,8 @@ public class MagneticFlux extends Activity {
     protected void onResume() {
     	super.onResume();
 
-    	Sensor sensor = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
-        sm.registerListener(sensorListener, sensor, SensorManager.SENSOR_DELAY_UI);
+    	Sensor sensor_m = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
+        sm.registerListener(sensorListener, sensor_m, SensorManager.SENSOR_DELAY_GAME);
     }
     
     @Override

@@ -311,8 +311,14 @@ static void estimate_earth(int *a, int *m, int *g)
 
 static void build_result_vector(int *a, short temperature, int *m, short *out)
 {
+    static int old_magnetic_quality = -1;
+
     int magnetic_quality = calibrate(m);
- 
+    if (magnetic_quality != old_magnetic_quality) { 
+        LOGI("Magnetic accuracy changed: %d", magnetic_quality);
+        old_magnetic_quality = magnetic_quality;
+    }
+
     static int g[3];
     estimate_earth(a, m, g);
 
