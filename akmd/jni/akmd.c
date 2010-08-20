@@ -495,7 +495,7 @@ int main(int argc, char **argv)
     if (argc != 8) {
         printf("Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <tz>\n");
         printf("\n");
-        printf("flux(i) = a * raw(i) * 10^(g(i)/8) + b * h(i), where\n");
+        printf("flux(i) = a * raw(i) * 10^(g(i)*0.4/20) + b * h(i), where\n");
         printf("  h(i) = -128 .. 127\n");
         printf("  g(i) = 0 .. 15\n");
         printf("  a, b = internal scaling parameters\n");
