@@ -110,19 +110,6 @@ static void calibrate_analog_apply()
     }
 }
 
-void calibrate_analog(int *m)
-{
-    int i;
-    for (i = 0; i < 3; i ++) {
-        /* Analog clipping handling */
-        if (m[i] == 127 || m[i] == -128) {
-            analog_offset[i] += m[i] == 127 ? -1 : 1;
-            LOGI("Adjusted analog axis %s to %d", axis_labels[i], analog_offset[i]);
-            calibrate_analog_apply();
-        }
-    }
-}
-
 /****************************************************************************/
 /* Digital calibration                                                      */
 /****************************************************************************/
@@ -134,14 +121,48 @@ static void calibrate_digital_rough(int *m, int *rc)
     static int rc_max[3] = { 0, 0, 0 };
 
     for (i = 0; i < 3; i ++) {
+        /* Autoadjust analog parameters */
+        if (m[i] == 127 || m[i] == -128) {
+            analog_offset[i] += m[i] == 127 ? -1 : 1;
+            LOGI("Adjusting analog axis %s to %d", axis_labels[i], analog_offset[i]);
+
+            /* The other axes are OK */
+            rc_min[i] = 0;
+            rc_max[i] = 0;
+            rc[i] = 0;
+
+            calibrate_analog_apply();
+            continue;
+        }
+
+        /* If recorded digital bounds get close to completely used,
+         * we risk having to constantly adjust the analog gain. We
+         * should be able to detect this happening as user rotates the
+         * device. */
+        if ((rc_max[i] - rc_min[i]) > ((230 * digital_gain[i]) >> (12 - CALIBRATE_DECAY))
+            && fixed_analog_gain > 0) {
+            fixed_analog_gain -= 1;
+            LOGI("Adjusting analog gain to %d", fixed_analog_gain);
+    
+            /* Everything will change. Trash state and return. */
+            for (i = 0; i < 3; i ++) {
+                rc_min[i] = 0;
+                rc_max[i] = 0;
+                rc[i] = 0;
+            }
+            
+            calibrate_analog_apply();
+            break;
+        }
+        
+        /* Apply 16-bit digital gain factor to scale 8->12 bits. */
         m[i] = m[i] * digital_gain[i] >> 12;
 
-        /* gradually shrink ther angles */
         rc_min[i] += 1;
         rc_max[i] -= 1;
 
-        /* minimum value seen */
         int value = m[i] << CALIBRATE_DECAY;
+        /* minimum value seen */
         if (rc_min[i] > value) {
             rc_min[i] = value;
         }
@@ -228,28 +249,30 @@ static float calibrate_digital_fine_fit(int pc[][3], float *fc)
     return error;
 }
 
-static int calibrate_digital(int *m)
+static int calibrate(int *m)
 {
+    int i;
+
     /* Get approximate calibration data for sphere fitting algorithm. */
     static int rough_calibration[3];
     calibrate_digital_rough(m, rough_calibration);
-
+    
     /* Use sphere fitting algorithm to do finer calibration. */
     static int point_cloud[PCR][3];
     static float fine_calibration[4] = { 0, 0, 0, 0 };
     calibrate_digital_fine_update(point_cloud, m, rough_calibration);
     float error = calibrate_digital_fine_fit(point_cloud, fine_calibration);
 
-    /* Adjust magnetic. */
-    m[0] -= fine_calibration[0];
-    m[1] -= fine_calibration[1];
-    m[2] -= fine_calibration[2];
+    /* Adjust magnetic from 8 bit measurement to final value */
+    for (i = 0; i < 3; i ++) {
+        m[i] -= fine_calibration[i];
+    }
 
     /* 2 uT average error */
     if (error <= 32) {
         return 3;
     }
-    /* 3 uT average error */
+    /* 4 uT average error */
     if (error <= 64) {
         return 2;
     }
@@ -281,8 +304,7 @@ static void estimate_earth(int *a, int *m, int *g)
 
 static void build_result_vector(int *a, short temperature, int *m, short *out)
 {
-    calibrate_analog(m);
-    int magnetic_quality = calibrate_digital(m);
+    int magnetic_quality = calibrate(m);
  
     static int g[3];
     estimate_earth(a, m, g);
@@ -313,9 +335,8 @@ static void build_result_vector(int *a, short temperature, int *m, short *out)
     out[2] = 90.0f - acosf(g[0] / length_i(g)) / (float) M_PI * 180.0f;
     
     out[3] = temperature;
-    /* FIXME: how to establish accuracy? */
-    out[4] = magnetic_quality;
-    out[5] = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+    out[4] = magnetic_quality; /* Magnetic accuracy; result of sphere fit. */
+    out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
     out[6] = (128 + a[0] * 720) >> 8;
