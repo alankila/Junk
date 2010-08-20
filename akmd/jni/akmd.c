@@ -101,10 +101,23 @@ static void recalculate_digital_gain()
     }
 }
 
+static char akm_analog_offset(int i)
+{
+    /* AKM specification says that values 0 .. 127 are monotonously
+     * decreasing corrections, and values 128 .. 255 are
+     * monotonously increasing corrections and that 0 and 128
+     * are near each other. */
+    signed int corr = analog_offset[i];
+    if (corr < 0) {
+        corr = 127 - corr;
+    }
+    return corr;
+}
+
 static void calibrate_analog_apply()
 {
     char params[6] = {
-        analog_offset[0], analog_offset[1], analog_offset[2],
+        akm_analog_offset(0), akm_analog_offset(1), akm_analog_offset(2),
         fixed_analog_gain, fixed_analog_gain, fixed_analog_gain,
     };
 
@@ -509,16 +522,7 @@ int main(int argc, char **argv)
 
     /* args 1 .. 3, 4 .. 6 */
     for (i = 0; i < 3; i ++) {
-        /* AKM specification says that values 0 .. 127 are monotonously
-         * decreasing corrections, and values 128 .. 255 are
-         * monotonously increasing corrections and that 0 and 128
-         * are near each other. */
-        int corr = atoi(argv[1+i]);
-        if (corr < 0) {
-            corr = 127 - corr;
-        }
-        /* now straightened so that -128 .. 127 can be used, center at 0 */
-        analog_offset[i] = corr;
+        analog_offset[i] = atoi(argv[1+i]);
         analog_gain[i] = atoi(argv[4+i]);
     }
     temperature_zero = atoi(argv[7]);
