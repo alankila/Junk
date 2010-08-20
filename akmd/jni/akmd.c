@@ -361,11 +361,11 @@ static void readLoop()
 
     int a[3];
     {
-        char bmode = BMA_MODE_NORMAL;
-        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
-            perror("bma150: Failed to SET_MODE=NORMAL");
-            _exit(12);
-        }
+        //char bmode = BMA_MODE_NORMAL;
+        //if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
+        //    perror("bma150: Failed to SET_MODE=NORMAL");
+        //    _exit(12);
+        //}
         /* Significance and range of values can be extracted from bma150.c. */
         short bma150_data[8];
         if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
@@ -376,11 +376,11 @@ static void readLoop()
         a[1] = -bma150_data[1];
         a[2] = bma150_data[2];
 
-        bmode = BMA_MODE_SLEEP;
-        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
-            perror("bma150: Failed to SET_MODE=SLEEP");
-            _exit(14);
-        }
+        //bmode = BMA_MODE_SLEEP;
+        //if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
+        //    perror("bma150: Failed to SET_MODE=SLEEP");
+        //    _exit(14);
+        //}
     }
 
     /* Significance and range of values can be extracted from
@@ -420,7 +420,7 @@ static void open_fds()
     }
     short amode = AKECS_MODE_POWERDOWN;
     if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
-        perror("Failed to put akm8973 to sleep");
+        perror("akm8973: SET_MODE=POWERDOWN");
         _exit(2);
     }
 
@@ -430,12 +430,12 @@ static void open_fds()
         _exit(4);
     }
     if (ioctl(bma150_fd, BMA_IOCTL_INIT, NULL) != 0) {
-        perror("Failed to init bma150.");
+        perror("bma150: INIT");
         _exit(5);
     }
-    char bmode = BMA_MODE_SLEEP;
+    char bmode = BMA_MODE_NORMAL;
     if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
-        perror("Failed to put bma150 to sleep initially.");
+        perror("bma150: SET_MODE=NORMAL");
         _exit(5);
     }
 }
