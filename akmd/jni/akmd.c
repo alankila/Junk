@@ -195,13 +195,18 @@ static float calibrate_digital_fine_fit_eval(int pc[][3], float x, float y, floa
         float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
         error += d * d;
     }
-    return sqrtf(error);
+    return sqrtf(error / PCR);
 }
 
-static void calibrate_digital_fine_fit(int pc[][3], float *fc)
+static float calibrate_digital_fine_fit(int pc[][3], float *fc)
 {
-    /* Region to use for derivate estimation, 16 = 1 uT */
-    const float d = 1;
+    /* Region to use for derivate estimation, 16 = 1 uT.
+     * Because the sensor is a bit noisy, it's probably good idea to
+     * be a bit fuzzy about the derivate estimation. */
+    const float d = 16;
+    /* Stepping speed. This should be as large as possible that still
+     * seems to converge rapidly. */
+    const float step = 16;
 
     float x = fc[0];
     float y = fc[1];
@@ -215,13 +220,15 @@ static void calibrate_digital_fine_fit(int pc[][3], float *fc)
     float dr = calibrate_digital_fine_fit_eval(pc, x, y, z, r+d) - error;
 
     /* Steepest descent */
-    fc[0] -= dx/d;
-    fc[1] -= dy/d;
-    fc[2] -= dz/d;
-    fc[3] -= dr/d;
+    fc[0] -= dx * (step / d);
+    fc[1] -= dy * (step / d);
+    fc[2] -= dz * (step / d);
+    fc[3] -= dr * (step / d);
+
+    return error;
 }
 
-static void calibrate_digital(int *m)
+static int calibrate_digital(int *m)
 {
     /* Get approximate calibration data for sphere fitting algorithm. */
     static int rough_calibration[3];
@@ -231,12 +238,27 @@ static void calibrate_digital(int *m)
     static int point_cloud[PCR][3];
     static float fine_calibration[4] = { 0, 0, 0, 0 };
     calibrate_digital_fine_update(point_cloud, m, rough_calibration);
-    calibrate_digital_fine_fit(point_cloud, fine_calibration);
+    float error = calibrate_digital_fine_fit(point_cloud, fine_calibration);
 
     /* Adjust magnetic. */
     m[0] -= fine_calibration[0];
     m[1] -= fine_calibration[1];
     m[2] -= fine_calibration[2];
+
+    /* 2 uT average error */
+    if (error <= 32) {
+        return 3;
+    }
+    /* 3 uT average error */
+    if (error <= 64) {
+        return 2;
+    }
+    /* 8 uT average error */
+    if (error <= 128) {
+        return 1;
+    }
+    /* Calibration completely whacked. */
+    return 0;
 }
 
 /****************************************************************************/
@@ -260,7 +282,7 @@ static void estimate_earth(int *a, int *m, int *g)
 static void build_result_vector(int *a, short temperature, int *m, short *out)
 {
     calibrate_analog(m);
-    calibrate_digital(m);
+    int magnetic_quality = calibrate_digital(m);
  
     static int g[3];
     estimate_earth(a, m, g);
@@ -292,7 +314,7 @@ static void build_result_vector(int *a, short temperature, int *m, short *out)
     
     out[3] = temperature;
     /* FIXME: how to establish accuracy? */
-    out[4] = 3; // status of mag. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
+    out[4] = magnetic_quality;
     out[5] = 3; // status of acc. sensor (UNRELIABLE, LOW, MEDIUM, HIGH)
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
