@@ -34,7 +34,6 @@ static struct timeval next_update;
 
 static int akm_fd, bma150_fd;
 
-typedef enum { READ, SLEEP } state_t;
 static char *axis_labels[] = { "X", "Y", "Z" };
 
 /* Temperature is value - zero. */
@@ -312,7 +311,7 @@ void sleep_until_next_update()
 
     /* Find out how long to sleep so that we achieve true periodic tick. */ 
     if (gettimeofday(&current_time, NULL) != 0) {
-        perror("failed to read time");
+        perror("Failed to read time");
         _exit(31);
     }
     next_update.tv_usec += delay * 1000;
@@ -337,54 +336,49 @@ void sleep_until_next_update()
     nanosleep(&interval, NULL);
 }
 
-static state_t readLoop()
+static void readLoop()
 {
     {
+        /* akm8973.c sleeps when we do this if nobody has device open. */
         int status;
-        if (ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) != 0) {
+        if (ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) != 0) {
             perror("akm8973: Failed to query control channel (aot) open count");
             _exit(10);
-        }
-
-        /* Nobody has aot socket open? We'll close the shop... */
-        if (status == 0) {
-            short amode = AKECS_MODE_POWERDOWN;
-            if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
-                perror("akm8973: Failed to SET_MODE=POWERDOWN");
-                _exit(12);
-            }
-            char bmode = BMA_MODE_SLEEP;
-            if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
-                perror("bma150: Failed to SET_MODE=SLEEP");
-                _exit(13);
-            }
-
-            LOGI("Going to sleep.");
-            return SLEEP;
         }
     }
 
     /* Measuring puts readable state to 0. It is going to take
      * some time before the values are ready. */
     {
-        short mode = AKECS_MODE_MEASURE;
-        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
+        short amode = AKECS_MODE_MEASURE;
+        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
             perror("akm8973: Failed to SET_MODE=READ");
-            _exit(14);
+            _exit(11);
         }
     }
 
     int a[3];
     {
+        char bmode = BMA_MODE_NORMAL;
+        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
+            perror("bma150: Failed to SET_MODE=NORMAL");
+            _exit(12);
+        }
         /* Significance and range of values can be extracted from bma150.c. */
         short bma150_data[8];
         if (ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) != 0) {
             perror("bma150: Failed to READ_ACCELERATION");
-            _exit(15);
+            _exit(13);
         }
         a[0] = bma150_data[0];
         a[1] = -bma150_data[1];
         a[2] = bma150_data[2];
+
+        bmode = BMA_MODE_SLEEP;
+        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
+            perror("bma150: Failed to SET_MODE=SLEEP");
+            _exit(14);
+        }
     }
 
     /* Significance and range of values can be extracted from
@@ -395,7 +389,7 @@ static state_t readLoop()
         char akm_data[5];
         if (ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) != 0) {
             perror("akm8973: Failed to GETDATA");
-            _exit(16);
+            _exit(15);
         }
         temperature = (signed char) -(akm_data[1] + temperature_zero);
         m[0] = 127 - (unsigned char) akm_data[2];
@@ -409,43 +403,10 @@ static state_t readLoop()
     /* Put data to be readable from compass input. */
     if (ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) != 0) {
         perror("bma150: Failed to SET_YPR={akm data}");
-        _exit(17);
+        _exit(16);
     }
 
     sleep_until_next_update();
-    return READ;
-}
-
-static state_t sleepLoop()
-{
-    /* Aot has been opened? Resume if so. */
-    int status;
-    if (ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) != 0) {
-        perror("akm8973: Failed to query control channel (AOT) open count");
-        _exit(20);
-    }
-
-    if (status != 0) {
-        LOGI("Starting periodic updates.");
-        char mode = BMA_MODE_NORMAL;
-        // akm device is woken by readLoop().
-        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
-            perror("bma150: Failed to SET_MODE=NORMAL");
-            _exit(21);
-        }
-        if (gettimeofday(&next_update, NULL) != 0) {
-            perror("failed to read time");
-            _exit(22);
-        }
-        return READ;
-    }
-
-    struct timespec interval = {
-        .tv_sec = 1,
-        .tv_nsec = 0,
-    };
-    nanosleep(&interval, NULL);
-    return SLEEP;
 }
 
 static void open_fds()
@@ -455,12 +416,10 @@ static void open_fds()
         perror("Failed to open " AKM_NAME);
         _exit(1);
     }
-    {
-        short mode = AKECS_MODE_POWERDOWN;
-        if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &mode) != 0) {
-            perror("Failed to put akm8973 to sleep");
-            _exit(2);
-        }
+    short amode = AKECS_MODE_POWERDOWN;
+    if (ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) != 0) {
+        perror("Failed to put akm8973 to sleep");
+        _exit(2);
     }
 
     bma150_fd = open(BMA150_NAME, O_RDONLY);
@@ -472,19 +431,15 @@ static void open_fds()
         perror("Failed to init bma150.");
         _exit(5);
     }
-
-    {
-        char mode = BMA_MODE_SLEEP;
-        if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &mode) != 0) {
-            perror("Failed to put bma150 to sleep initially.");
-            _exit(5);
-        }
+    char bmode = BMA_MODE_SLEEP;
+    if (ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) != 0) {
+        perror("Failed to put bma150 to sleep initially.");
+        _exit(5);
     }
 }
 
 int main(int argc, char **argv)
 {
-    state_t state = SLEEP;
     int i;
    
     if (argc != 8) {
@@ -520,14 +475,11 @@ int main(int argc, char **argv)
  
     open_fds();
     calibrate_analog_apply();
+    if (gettimeofday(&next_update, NULL) != 0) {
+        perror("Failed to read time");
+        _exit(101);
+    }
     while (1) {
-        switch (state) {
-        case READ:
-            state = readLoop();
-            break;
-        case SLEEP:
-            state = sleepLoop();
-            break;
-        }
+        readLoop();
     }
 }
