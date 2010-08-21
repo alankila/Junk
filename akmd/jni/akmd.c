@@ -211,7 +211,7 @@ static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
     rm[0] /= len;
     rm[1] /= len;
     /* 3rd vector is not independent because we are normalized. It can
-     * point above or below the xy plane, though, givin total of 2+2+1 bits. */
+     * point above or below the xy plane, though, so total of 2+2+1 bits. */
     int idx = ((rm[0] & 3) << 3) | ((rm[1] & 3) << 1) | (rm[2] < 0 ? 1 : 0);
 
     int *pos = pc[idx];
