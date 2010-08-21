@@ -206,7 +206,7 @@ static int calibrate_digital_rough(int *m, int *rc)
 }
 
 #define PCR 32
-static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
+static void calibrate_digital_fine_update(float pc[PCR][3], int *m, int *rc)
 {
     /* Record current sample at point cloud using the rough estimate to
      * determine which bin to put the precise measurement in. */
@@ -224,21 +224,22 @@ static void calibrate_digital_fine_update(int pc[PCR][3], int *m, int *rc)
      * point above or below the xy plane, though, so total of 2+2+1 bits. */
     int idx = ((rm[0] & 3) << 3) | ((rm[1] & 3) << 1) | (rm[2] < 0 ? 1 : 0);
 
-    int *pos = pc[idx];
+    float *pos = pc[idx];
     pos[0] = m[0];
     pos[1] = m[1];
     pos[2] = m[2];
 }
 
-static float calibrate_digital_fine_fit_eval(int pc[][3], float x, float y, float z, float r)
+static float calibrate_digital_fine_fit_eval(float pc[][3], float x, float y, float z, float r)
 {
     int i;
 
     float error = 0;
     int n = 0;
     for (i = 0; i < PCR; i ++) {
-        int *v = pc[i];
+        float *v = pc[i];
 
+        /* Uninitialized vector? */
         if (v[0] == 0 && v[1] == 0 && v[2] == 0) {
             continue;
         }
@@ -255,7 +256,7 @@ static float calibrate_digital_fine_fit_eval(int pc[][3], float x, float y, floa
     return sqrtf(error / n);
 }
 
-static float calibrate_digital_fine_fit(int pc[][3], float *fc)
+static float calibrate_digital_fine_fit(float pc[][3], float *fc)
 {
     /* Region to use for derivate estimation, 16 = 1 uT.
      * Because the sensor is a bit noisy, it's probably good idea to
@@ -302,7 +303,7 @@ static int calibrate(int *m)
      * estimate of the rough calibration. */
     if (good_axes == 3) {
         /* Use sphere fitting algorithm to do finer calibration. */
-        static int point_cloud[PCR][3];
+        static float point_cloud[PCR][3];
         calibrate_digital_fine_update(point_cloud, m, rough_calibration);
         error = calibrate_digital_fine_fit(point_cloud, fine_calibration);
     }
