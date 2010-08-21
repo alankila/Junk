@@ -1,0 +1,19 @@
+Quick document of things to try/do
+
+- Make a 100 Hz event loop that records BMA150 (with 100 Hz sampling rate)
+  and AKM8973 magnetic field. Start/stop this event loop from the aot thread.
+
+- Lowpass filter both to about 25 Hz, perhaps with a 2nd order butterworth,
+  or just 4-tap boxcar FIR. Report the data as soon as we have it, because
+  the ioctl to do this is not going to cost us much, so we can just ignore
+  the delay. (This makes sense because the sensors are going to be filtered
+  anyway to about 25 Hz sampling rate, so you can get no more nor any less
+  resolution, and it's simpler this way.)
+
+- Update calibration code entirely to float. Fuck integers. Fuck phones
+  without FPU. It's going to be fast enough anyway.
+
+- Add condition to sphere fit that fitting only starts after more than 10
+  current vectors have been measured. Define current as "has been
+  recorded in the last minute". (Add timestamp to structure.) This could
+  handle probable thermal drift of the measurements while phone is sleeping.
