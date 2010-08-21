@@ -131,13 +131,15 @@ static void calibrate_analog_apply()
 /****************************************************************************/
 /* Digital calibration                                                      */
 /****************************************************************************/
-static void calibrate_digital_rough(int *m, int *rc)
+static int calibrate_digital_rough(int *m, int *rc)
 {
     int i;
+    const int MINIMUM_FIELD = 25; /* uT */
     const int CALIBRATE_DECAY = 8;
     static int rc_min[3] = { 0, 0, 0 };
     static int rc_max[3] = { 0, 0, 0 };
 
+    int reliable_axes = 0;
     for (i = 0; i < 3; i ++) {
         /* Autoadjust analog parameters */
         if (m[i] == 127 || m[i] == -128) {
@@ -191,8 +193,16 @@ static void calibrate_digital_rough(int *m, int *rc)
             rc_max[i] = value;
         }
 
+        /* Establish rough estimate of the center. */
         rc[i] = (rc_min[i] + rc_max[i]) >> (1 + CALIBRATE_DECAY);
+
+        /* Only report the axis as good if it is larger than some minimum. */
+        if (((rc_max[i] - rc_min[i]) >> CALIBRATE_DECAY) >= MINIMUM_FIELD * 2) {
+            reliable_axes ++;
+        }
     }
+
+    return reliable_axes;
 }
 
 #define PCR 32
@@ -225,8 +235,13 @@ static float calibrate_digital_fine_fit_eval(int pc[][3], float x, float y, floa
     int i;
 
     float error = 0;
+    int n = 0;
     for (i = 0; i < PCR; i ++) {
         int *v = pc[i];
+
+        if (v[0] == 0 && v[1] == 0 && v[2] == 0) {
+            continue;
+        }
 
         float dx = v[0] - x;
         float dy = v[1] - y;
@@ -234,8 +249,10 @@ static float calibrate_digital_fine_fit_eval(int pc[][3], float x, float y, floa
 
         float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
         error += d * d;
+        n += 1;
     }
-    return sqrtf(error / PCR);
+
+    return sqrtf(error / n);
 }
 
 static float calibrate_digital_fine_fit(int pc[][3], float *fc)
@@ -272,15 +289,23 @@ static int calibrate(int *m)
 {
     int i;
 
-    /* Get approximate calibration data for sphere fitting algorithm. */
     static int rough_calibration[3];
-    calibrate_digital_rough(m, rough_calibration);
-    
-    /* Use sphere fitting algorithm to do finer calibration. */
-    static int point_cloud[PCR][3];
+    static float error = 256;
     static float fine_calibration[4] = { 0, 0, 0, 0 };
-    calibrate_digital_fine_update(point_cloud, m, rough_calibration);
-    float error = calibrate_digital_fine_fit(point_cloud, fine_calibration);
+
+    /* Get approximate calibration data for sphere fitting algorithm.
+     * Return value is the number of axes where we think we got a good
+     * starting point. */
+    int good_axes = calibrate_digital_rough(m, rough_calibration);
+    
+    /* Let's not even attempt fine calibration until we got a reasonable
+     * estimate of the rough calibration. */
+    if (good_axes == 3) {
+        /* Use sphere fitting algorithm to do finer calibration. */
+        static int point_cloud[PCR][3];
+        calibrate_digital_fine_update(point_cloud, m, rough_calibration);
+        error = calibrate_digital_fine_fit(point_cloud, fine_calibration);
+    }
     //LOGI("Spherical fit error: %f", error);
 
     /* Adjust magnetic from 8 bit measurement to final value */
@@ -465,6 +490,8 @@ static void readLoop()
     m[0] = 127 - (unsigned char) akm_data[2];
     m[1] = 127 - (unsigned char) akm_data[3];
     m[2] = 127 - (unsigned char) akm_data[4];
+
+    //LOGI("Magnetic vector (%d %d %d)", m[0], m[1], m[2]);
 
     /* Calculate and set data readable on compass input. */
     short final_data[12];
