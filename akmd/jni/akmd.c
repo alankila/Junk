@@ -419,11 +419,22 @@ static void build_result_vector(float *a, short temperature, float *m, short *ou
 /****************************************************************************/
 void sleep_until_next_update()
 {
-    /* Get time until next update (47 samples per second). We use a
-     * fixed rate because the accelerometer and magnetometer are noisy.
-     * The bma hardware was configured by kernel for 24 Hz sampling rate.
-     * 21 ms is the shortest we can do because magnetometer is slow. */
-    unsigned short delay = 21;
+    unsigned short delay;
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) == 0);
+
+    /* Decide if we want "fast" updates or "slow" updates. GAME and UI
+     * are defined as <= 60.
+     *
+     * We prefer a fixed rate, because accelerometer is optimal at its
+     * maximum filtering state, 24 Hz. So we sample at 47 Hz and then
+     * average successive samples for both magnetometer and accelerometer.
+     */
+    if (delay <= 60) {
+        delay = 21;
+    } else {
+        /* divide by 2 to get 2 real samples for the slow modes too. */
+        delay /= 2;
+    }
 
     /* Find out how long to sleep so that we achieve true periodic tick. */ 
     SUCCEED(gettimeofday(&current_time, NULL) == 0);

@@ -12,7 +12,7 @@ echo "Update APK & .SO"
 mkdir -p dsp/system/lib
 mkdir -p dsp/system/app
 cp -v ~/git/cyanogenmod/out/target/product/hero/system/lib/libaudioflinger.so dsp/system/lib/
-cp -v ~/git/android_packages_apps_DSPManager.git/bin/DSPManager.apk dsp/system/app/
+cp -v ~/git/cyanogenmod/out/target/product/hero/system/app/DSPManager.apk dsp/system/app/
 
 echo "Build zip";
 cd dsp/
