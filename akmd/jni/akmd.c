@@ -38,52 +38,52 @@
         exit(1);                                                           \
     } } while (0)
 
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
+
+/* Point Cloud Resolution */
+#define PCR 32           /* 32 vectors spread around device */
+#define PCR_USE_TIME 100 /* vector is good for 100 seconds */
+
+typedef struct {
+    float x, y, z;
+    int time;
+} point_t;
+
+static point_t point_cloud[PCR];
+
 static struct timeval current_time;
 static struct timeval next_update;
 
 static int akm_fd, bma150_fd;
 
-static char *axis_labels[] = { "X", "Y", "Z" };
-
-/* Temperature is value - zero. */
+/* Temperature is -(value-zero). */
 static char temperature_zero = 0;
-/* The actual gain used on hardware */
-static int fixed_analog_gain = 15;
-/* Digital gain to compensate for analog setting. */
-static int digital_gain[3];
 /* The user requested analog gain */
 static int analog_gain[3];
 /* The user requested analog offset */
 static int analog_offset[3];
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
+/* The actual gain used on hardware */
+static int fixed_analog_gain = 15;
+/* Digital gain to compensate for analog setting. */
+static float digital_gain[3];
 
 /****************************************************************************/
 /* Some vector utilities                                                    */
 /****************************************************************************/
-static void cross_product_iff(int *a, float *b, float *c)
+static void cross_product(float *a, float *b, float *c)
 {
     c[0] = a[1] * b[2] - a[2] * b[1];
     c[1] = a[2] * b[0] - a[0] * b[2];
     c[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-static int dot_ii(int *a, int *b)
+static float dot(float *a, float *b)
 {
     return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 }
 
-static float dot_if(int *a, float *b)
-{
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-static float length_f(float *a)
-{
-    return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
-}
-
-static float length_i(int *a)
+static float length(float *a)
 {
     return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
 }
@@ -96,8 +96,7 @@ static void recalculate_digital_gain()
     int i;
     for (i = 0; i < 3; i ++) {
         /* 0.4 dB per step */
-        digital_gain[i] = 65536.0f
-            * powf(10.0f, (analog_gain[i] - fixed_analog_gain) * 0.4f / 20.0f);
+        digital_gain[i] = powf(10.0f, (analog_gain[i] - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
     }
 }
 
@@ -123,7 +122,7 @@ static void calibrate_analog_apply()
 
     int i;
     for (i = 0; i < 6; i ++) {
-        char rwbuf[5] = { 2, 0xe1+i, params[i], 0, 0 };
+        char rwbuf[5] = { 2, 0xe1+i, params[i] };
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) == 0);
     }
 }
@@ -131,20 +130,21 @@ static void calibrate_analog_apply()
 /****************************************************************************/
 /* Digital calibration                                                      */
 /****************************************************************************/
-static int calibrate_digital_rough(int *m, int *rc)
+static int calibrate_digital_rough(float *m, float *rc)
 {
     int i;
-    const int MINIMUM_FIELD = 25; /* uT */
-    const int CALIBRATE_DECAY = 8;
-    static int rc_min[3] = { 0, 0, 0 };
-    static int rc_max[3] = { 0, 0, 0 };
+    const int MINIMUM_FIELD = 25.0f; /* uT */
+    const int CALIBRATE_DECAY = 0.002f;
+    const int ANALOG_MAX = 120.0f;
+    static float rc_min[3];
+    static float rc_max[3];
 
     int reliable_axes = 0;
     for (i = 0; i < 3; i ++) {
         /* Autoadjust analog parameters */
-        if (m[i] == 127 || m[i] == -128) {
-            analog_offset[i] += m[i] == 127 ? -1 : 1;
-            LOGI("Adjusting analog axis %s to %d", axis_labels[i], analog_offset[i]);
+        if (m[i] > ANALOG_MAX || m[i] < -ANALOG_MAX) {
+            analog_offset[i] += m[i] > ANALOG_MAX ? -1 : 1;
+            LOGI("Adjusting analog axis %d to %d because of value %f", i, analog_offset[i], m[i]);
 
             /* The other axes are OK */
             rc_min[i] = 0;
@@ -159,7 +159,7 @@ static int calibrate_digital_rough(int *m, int *rc)
          * we risk having to constantly adjust the analog gain. We
          * should be able to detect this happening as user rotates the
          * device. */
-        if ((rc_max[i] - rc_min[i]) > ((230 * digital_gain[i]) >> (12 - CALIBRATE_DECAY))
+        if (rc_max[i] - rc_min[i] > ANALOG_MAX * 2 * digital_gain[i]
             && fixed_analog_gain > 0) {
             fixed_analog_gain -= 1;
             LOGI("Adjusting analog gain to %d", fixed_analog_gain);
@@ -177,27 +177,26 @@ static int calibrate_digital_rough(int *m, int *rc)
         }
         
         /* Apply 16-bit digital gain factor to scale 8->12 bits. */
-        m[i] = m[i] * digital_gain[i] >> 12;
+        m[i] *= digital_gain[i];
 
-        rc_min[i] += 1;
-        rc_max[i] -= 1;
+        rc_min[i] += CALIBRATE_DECAY;
+        rc_max[i] -= CALIBRATE_DECAY;
 
-        int value = m[i] << CALIBRATE_DECAY;
         /* minimum value seen */
-        if (rc_min[i] > value) {
-            rc_min[i] = value;
+        if (rc_min[i] > m[i]) {
+            rc_min[i] = m[i];
         }
 
         /* maximum value seen */
-        if (rc_max[i] < value) {
-            rc_max[i] = value;
+        if (rc_max[i] < m[i]) {
+            rc_max[i] = m[i];
         }
 
         /* Establish rough estimate of the center. */
-        rc[i] = (rc_min[i] + rc_max[i]) >> (1 + CALIBRATE_DECAY);
+        rc[i] = (rc_min[i] + rc_max[i]) * 0.5f;
 
         /* Only report the axis as good if it is larger than some minimum. */
-        if (((rc_max[i] - rc_min[i]) >> CALIBRATE_DECAY) >= MINIMUM_FIELD * 2) {
+        if (rc_max[i] - rc_min[i] >= MINIMUM_FIELD * 2) {
             reliable_axes ++;
         }
     }
@@ -205,58 +204,72 @@ static int calibrate_digital_rough(int *m, int *rc)
     return reliable_axes;
 }
 
-#define PCR 32
-static void calibrate_digital_fine_update(float pc[PCR][3], int *m, int *rc)
+static void calibrate_digital_fine_update(float *m, float *rc)
 {
     /* Record current sample at point cloud using the rough estimate to
      * determine which bin to put the precise measurement in. */
-    int rm[3] = {
+    float rm[3] = {
         m[0] - rc[0],
         m[1] - rc[1],
         m[2] - rc[2],
     };
 
     /* keep top 2 bits of normalized rm, and turn it into index */
-    int len = (int) length_i(rm) / 4 + 1;
+    float len = length(rm);
     rm[0] /= len;
     rm[1] /= len;
+
+    int classify(float v) {
+        if (v < -0.5f) {
+            return 0;
+        }
+        if (v < 0.0f) {
+            return 1;
+        }
+        if (v < 0.5f) {
+            return 2;
+        }
+        return 3;
+    }
     /* 3rd vector is not independent because we are normalized. It can
      * point above or below the xy plane, though, so total of 2+2+1 bits. */
-    int idx = ((rm[0] & 3) << 3) | ((rm[1] & 3) << 1) | (rm[2] < 0 ? 1 : 0);
+    int idx = classify(rm[0]) << 3 | classify(rm[1]) << 1 | classify(rm[2]) >> 1;
 
-    float *pos = pc[idx];
-    pos[0] = m[0];
-    pos[1] = m[1];
-    pos[2] = m[2];
+    point_cloud[idx].x = m[0];
+    point_cloud[idx].y = m[1];
+    point_cloud[idx].z = m[2];
+    point_cloud[idx].time = next_update.tv_sec;
 }
 
-static float calibrate_digital_fine_fit_eval(float pc[][3], float x, float y, float z, float r)
+static float calibrate_digital_fine_fit_eval(float x, float y, float z, float r)
 {
     int i;
 
     float error = 0;
     int n = 0;
     for (i = 0; i < PCR; i ++) {
-        float *v = pc[i];
-
-        /* Uninitialized vector? */
-        if (v[0] == 0 && v[1] == 0 && v[2] == 0) {
+        if (point_cloud[i].time < next_update.tv_sec - PCR_USE_TIME) {
             continue;
         }
 
-        float dx = v[0] - x;
-        float dy = v[1] - y;
-        float dz = v[2] - z;
+        float dx = point_cloud[i].x - x;
+        float dy = point_cloud[i].y - y;
+        float dz = point_cloud[i].z - z;
 
         float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
         error += d * d;
         n += 1;
     }
 
+    /* Less than 1/4th of bins filled? */
+    if (n < PCR/4) {
+        return -1.0f;
+    }
+
     return sqrtf(error / n);
 }
 
-static float calibrate_digital_fine_fit(float pc[][3], float *fc)
+static float calibrate_digital_fine_fit(float *fc)
 {
     /* Region to use for derivate estimation, 16 = 1 uT.
      * Because the sensor is a bit noisy, it's probably good idea to
@@ -271,11 +284,15 @@ static float calibrate_digital_fine_fit(float pc[][3], float *fc)
     float z = fc[2];
     float r = fc[3];
 
-    float error = calibrate_digital_fine_fit_eval(pc, x - d/2, y - d/2, z - d/2, r - d/2);
-    float dx = calibrate_digital_fine_fit_eval(pc, x+d, y, z, r) - error;
-    float dy = calibrate_digital_fine_fit_eval(pc, x, y+d, z, r) - error;
-    float dz = calibrate_digital_fine_fit_eval(pc, x, y, z+d, r) - error;
-    float dr = calibrate_digital_fine_fit_eval(pc, x, y, z, r+d) - error;
+    float error = calibrate_digital_fine_fit_eval(x - d/2, y - d/2, z - d/2, r - d/2);
+    if (error < 0) {
+        return error;
+    }
+
+    float dx = calibrate_digital_fine_fit_eval(x+d, y, z, r) - error;
+    float dy = calibrate_digital_fine_fit_eval(x, y+d, z, r) - error;
+    float dz = calibrate_digital_fine_fit_eval(x, y, z+d, r) - error;
+    float dr = calibrate_digital_fine_fit_eval(x, y, z, r+d) - error;
 
     /* Steepest descent */
     fc[0] -= dx * (step / d);
@@ -286,26 +303,26 @@ static float calibrate_digital_fine_fit(float pc[][3], float *fc)
     return error;
 }
 
-static int calibrate(int *m)
+static int calibrate(float *m)
 {
     int i;
 
-    static int rough_calibration[3];
-    static float error = 256;
-    static float fine_calibration[4] = { 0, 0, 0, 0 };
+    static float rough_calibration[3];
+    static float fine_calibration[4];
+    static float error = 256.0f;
 
     /* Get approximate calibration data for sphere fitting algorithm.
      * Return value is the number of axes where we think we got a good
      * starting point. */
     int good_axes = calibrate_digital_rough(m, rough_calibration);
-    
-    /* Let's not even attempt fine calibration until we got a reasonable
-     * estimate of the rough calibration. */
     if (good_axes == 3) {
         /* Use sphere fitting algorithm to do finer calibration. */
-        static float point_cloud[PCR][3];
-        calibrate_digital_fine_update(point_cloud, m, rough_calibration);
-        error = calibrate_digital_fine_fit(point_cloud, fine_calibration);
+        calibrate_digital_fine_update(m, rough_calibration);
+        float fit_error = calibrate_digital_fine_fit(fine_calibration);
+        /* Assume old fit is still good, if phone hasn't moved much lately */
+        if (fit_error >= 0) {
+            error = fit_error;
+        }
     }
     //LOGI("Spherical fit error: %f", error);
 
@@ -315,15 +332,15 @@ static int calibrate(int *m)
     }
 
     /* 2 uT average error */
-    if (error <= 32) {
+    if (error <= 32.0f) {
         return 3;
     }
     /* 4 uT average error */
-    if (error <= 64) {
+    if (error <= 64.0f) {
         return 2;
     }
     /* 8 uT average error */
-    if (error <= 128) {
+    if (error <= 128.0f) {
         return 1;
     }
     /* Calibration completely whacked. */
@@ -333,7 +350,7 @@ static int calibrate(int *m)
 /****************************************************************************/
 /* Sensor output calculation                                                */
 /****************************************************************************/
-static void estimate_earth(int *a, int *m, int *g)
+static void estimate_earth(float *a, float *m, float *g)
 {
     int i;
     /* When device is not being accelerated, g = a is true. However, when
@@ -348,17 +365,10 @@ static void estimate_earth(int *a, int *m, int *g)
     }
 }
 
-static void build_result_vector(int *a, short temperature, int *m, short *out)
+static void build_result_vector(float *a, short temperature, float *m, short *out)
 {
-    static int old_magnetic_quality = -1;
-
     int magnetic_quality = calibrate(m);
-    if (magnetic_quality != old_magnetic_quality) { 
-        LOGI("Magnetic accuracy changed: %d", magnetic_quality);
-        old_magnetic_quality = magnetic_quality;
-    }
-
-    static int g[3];
+    static float g[3];
     estimate_earth(a, m, g);
 
     /*
@@ -371,29 +381,33 @@ static void build_result_vector(int *a, short temperature, int *m, short *out)
      * is used to establish orthogonal basis in E. */
     float o1[3];
     float ref[3] = { 0, -1, 0 };
-    cross_product_iff(g, ref, o1);
+    cross_product(g, ref, o1);
     float o2[3];
-    cross_product_iff(g, o1, o2);
+    cross_product(g, o1, o2);
     
     /* Now project magnetic field on components o1 and o2. */
-    float o1l = dot_if(m, o1) * length_f(o2);
-    float o2l = dot_if(m, o2) * length_f(o1);
+    float o1l = dot(m, o1) * length(o2);
+    float o2l = dot(m, o2) * length(o1);
+
+    int rad2deg(float v) {
+        return v * (180.0f / (float) M_PI);
+    }
 
     /* Establish the angle in E */
-    out[0] = 180.0f + atan2f(o1l, o2l) / (float) M_PI * 180.0f;
+    out[0] = 180.0f + rad2deg(atan2f(o1l, o2l));
     /* pitch */
-    out[1] = atan2f(g[1], -g[2]) / (float) M_PI * 180.0f;
+    out[1] = rad2deg(atan2f(g[1], -g[2]));
     /* roll */
-    out[2] = 90.0f - acosf(g[0] / length_i(g)) / (float) M_PI * 180.0f;
+    out[2] = 90.0f - rad2deg(acosf(g[0] / length(g)));
     
     out[3] = temperature;
     out[4] = magnetic_quality; /* Magnetic accuracy; result of sphere fit. */
     out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
-    out[6] = (128 + a[0] * 720) >> 8;
-    out[7] = (128 + a[2] * 720) >> 8;
-    out[8] = (128 + a[1] * -720) >> 8;
+    out[6] = a[0] * (720.0f/256.0f);
+    out[7] = a[2] * (720.0f/256.0f);
+    out[8] = a[1] * (-720.0f/256.0f);
 
     out[9]  =  m[0];
     out[10] =  m[1];
@@ -405,34 +419,11 @@ static void build_result_vector(int *a, short temperature, int *m, short *out)
 /****************************************************************************/
 void sleep_until_next_update()
 {
-    /* Get time until next update. */
-    unsigned short delay;
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) == 0);
-
-/* Automatic sampling rate adapation. The code is disabled because
- * the BMA150 chip's measurement is really pretty noisy. Enabling this
- * is appropriate only if it gets better smoothed by us. */
-#if 0
-    /* Number of updates we want per second.
-     * 6 = 1500, 5 = 750, 4 = 375, etc. Chosen sample rate is
-     * always equal or the nearest lower rate to what app wanted. */
-    int required_sample_rate = delay != 0 ? 1000 / delay : 1500;
-    int bma_delay_value = 6;
-    int bma_delay_rate = 1500;
-    while (bma_delay_value > 0 && required_sample_rate <= bma_delay_value) {
-        bma_delay_value /= 2;
-        bma_delay_value --;
-    }
-
-    char rwbuf[8] = { 2, RANGE_BWIDTH_REG, 0 };
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ, &rwbuf) == 0);
-    rwbuf[2] = (rwbuf[1] & 0xf8) | bma_delay_value;
-    rwbuf[1] = RANGE_BWIDTH_REG;
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
-#endif
-    if (delay == 0) {
-        return;
-    }
+    /* Get time until next update (47 samples per second). We use a
+     * fixed rate because the accelerometer and magnetometer are noisy.
+     * The bma hardware was configured by kernel for 24 Hz sampling rate.
+     * 21 ms is the shortest we can do because magnetometer is slow. */
+    unsigned short delay = 21;
 
     /* Find out how long to sleep so that we achieve true periodic tick. */ 
     SUCCEED(gettimeofday(&current_time, NULL) == 0);
@@ -448,6 +439,7 @@ void sleep_until_next_update()
          * every now and then, and it isn't horribly destructive. */
         if (sleep_time < -delay) {
             next_update = current_time;
+            LOGI("missed a beat (CPU/sensors too slow)");
         }
         return;
     }
@@ -461,6 +453,11 @@ void sleep_until_next_update()
 
 static void readLoop()
 {
+    int i;
+    static int abuf[2][3];
+    static int mbuf[2][3];
+    static int index = 0;
+
     /* This ioctl sleeps if the control channel isn't open, so we can use
      * this to pause ourselves. Another thread shuts down the BMA150 chip.
      * AKM 8973 will sleep when not being measured anyway. */
@@ -475,24 +472,28 @@ static void readLoop()
     /* BMA150 is constantly measuring and filtering, so it never sleeps.
      * The ioctl in truth returns only 3 values, but buffer in kernel is
      * defined as 8 shorts long. */
-    int a[3];
     short bma150_data[8];
     SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) == 0);
-    a[0] = bma150_data[0];
-    a[1] = -bma150_data[1];
-    a[2] = bma150_data[2];
+    abuf[index][0] = bma150_data[0];
+    abuf[index][1] = -bma150_data[1];
+    abuf[index][2] = bma150_data[2];
 
     /* Significance and range of values can be extracted from
      * online AK 8973 manual. The kernel driver just passes the data on. */
-    int m[3];
     char akm_data[5];
     SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
     short temperature = (signed char) -(akm_data[1] + temperature_zero);
-    m[0] = 127 - (unsigned char) akm_data[2];
-    m[1] = 127 - (unsigned char) akm_data[3];
-    m[2] = 127 - (unsigned char) akm_data[4];
+    mbuf[index][0] = 127 - (unsigned char) akm_data[2];
+    mbuf[index][1] = 127 - (unsigned char) akm_data[3];
+    mbuf[index][2] = 127 - (unsigned char) akm_data[4];
 
-    //LOGI("Magnetic vector (%d %d %d)", m[0], m[1], m[2]);
+    float a[3];
+    float m[3];
+    for (i = 0; i < 3; i ++) {
+        a[i] = 0.5f * (abuf[0][i] + abuf[1][i]);
+        m[i] = 0.5f * (mbuf[0][i] + mbuf[1][i]);
+    }
+    index = (index + 1) & 1;
 
     /* Calculate and set data readable on compass input. */
     short final_data[12];
@@ -512,6 +513,13 @@ static void open_fds()
     bma150_fd = open(BMA150_NAME, O_RDONLY);
     SUCCEED(bma150_fd != -1);
     SUCCEED(ioctl(bma150_fd, BMA_IOCTL_INIT, NULL) == 0);
+    
+    char rwbuf[8] = { 1, RANGE_BWIDTH_REG };
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ, &rwbuf) == 0);
+    rwbuf[2] = (rwbuf[1] & 0xf8) | 1; /* 47 Hz sampling */
+    rwbuf[0] = 2;
+    rwbuf[1] = RANGE_BWIDTH_REG;
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
 }
 
 void *aot_tracking_thread(void *arg)
