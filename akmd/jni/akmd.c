@@ -380,7 +380,7 @@ static void build_result_vector(float *a, short temperature, float *m, short *ou
     /* From g, we need to discover 2 suitable vectors. Cross product
      * is used to establish orthogonal basis in E. */
     float o1[3];
-    float ref[3] = { 0, -1, 0 };
+    float ref[3] = { -1, 0, 0 };
     cross_product(g, ref, o1);
     float o2[3];
     cross_product(g, o1, o2);
@@ -394,7 +394,7 @@ static void build_result_vector(float *a, short temperature, float *m, short *ou
     }
 
     /* Establish the angle in E */
-    out[0] = 180.0f + rad2deg(atan2f(o1l, o2l));
+    out[0] = 180.0f - rad2deg(atan2f(o2l, o1l));
     /* pitch */
     out[1] = rad2deg(atan2f(g[1], -g[2]));
     /* roll */
