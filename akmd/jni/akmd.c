@@ -41,8 +41,8 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
 
 /* Point Cloud Resolution */
-#define PCR 32           /* 32 vectors spread around device */
-#define PCR_USE_TIME 100 /* vector is good for 100 seconds */
+#define PCR 32           /* record this number of vectors around the device */
+#define PCR_USE_TIME 100 /* time the vector is good for (seconds) */
 
 typedef struct {
     float x, y, z;
@@ -134,9 +134,9 @@ static void calibrate_analog_apply()
 static int calibrate_digital_rough(float *m, float *rc)
 {
     int i;
-    const int MINIMUM_FIELD = 25.0f; /* uT */
-    const int CALIBRATE_DECAY = 0.002f;
-    const int ANALOG_MAX = 120.0f;
+    const float MINIMUM_FIELD = 25.0f; /* uT */
+    const float CALIBRATE_DECAY = 0.01f;
+    const float ANALOG_MAX = 120.0f;
     static float rc_min[3];
     static float rc_max[3];
 
@@ -197,7 +197,7 @@ static int calibrate_digital_rough(float *m, float *rc)
         rc[i] = (rc_min[i] + rc_max[i]) * 0.5f;
 
         /* Only report the axis as good if it is larger than some minimum. */
-        if (rc_max[i] - rc_min[i] >= MINIMUM_FIELD * 2) {
+        if (rc_max[i] - rc_min[i] >= MINIMUM_FIELD * 2.0f) {
             reliable_axes ++;
         }
     }
@@ -280,12 +280,14 @@ static float calibrate_digital_fine_fit(float *fc)
      * seems to converge rapidly. */
     const float step = 16;
 
-    float x = fc[0];
-    float y = fc[1];
-    float z = fc[2];
-    float r = fc[3];
+    /* This is a bit lame; should estimate derivate with an offset
+     * properly calculated for each axis... */
+    float x = fc[0] - d/2;
+    float y = fc[1] - d/2;
+    float z = fc[2] - d/2;
+    float r = fc[3] - d/2;
 
-    float error = calibrate_digital_fine_fit_eval(x - d/2, y - d/2, z - d/2, r - d/2);
+    float error = calibrate_digital_fine_fit_eval(x, y, z, r);
     if (error < 0) {
         return error;
     }
@@ -559,9 +561,9 @@ int main(int argc, char **argv)
     if (argc != 8) {
         printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <tz>\n");
         printf("\n");
-        printf("ax, ay, az = accelerometer offset.\n");
-        printf("gx, gy, gz = magnetometer gain.\n");
-        printf("tz         = temperature zero offset.\n");
+        printf("ax, ay, az = accelerometer offset (g)\n");
+        printf("gx, gy, gz = magnetometer gain (0.4 dB)\n");
+        printf("tz         = temperature zero offset (C)\n");
         printf("\n");
         printf("Per-axis accelerometer offset needs to be calibrated per device.\n");
         printf("Per-axis magnetic gain needs to be calibrated per device type.\n");
