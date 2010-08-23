@@ -3,26 +3,37 @@
 	android:orientation="vertical" android:layout_width="fill_parent"
 	android:layout_height="fill_parent">
 
-	<Button android:layout_width="wrap_content"
-		android:layout_height="wrap_content" android:text="Reset" android:id="@+id/Reset"></Button>
-
-	<LinearLayout android:layout_height="wrap_content"
+	<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Magnetic Sensor"></TextView><LinearLayout android:layout_height="wrap_content"
 		android:layout_width="fill_parent" android:layout_margin="2sp">
-
 		<com.bel.android.magneticflux.MagneticSurface
 			android:layout_width="100px" android:layout_height="100px"
-			android:layout_margin="2sp" android:id="@+id/XY" />
+			android:layout_margin="2sp" android:id="@+id/MXY" />
 		<com.bel.android.magneticflux.MagneticSurface
 			android:layout_height="100px" android:layout_width="100px"
-			android:layout_margin="2sp" android:id="@+id/XZ" />
+			android:layout_margin="2sp" android:id="@+id/MXZ" />
 		<com.bel.android.magneticflux.MagneticSurface
 			android:layout_height="100px" android:layout_width="100px"
-			android:layout_margin="2sp" android:id="@+id/YZ" />
-
+			android:layout_margin="2sp" android:id="@+id/MYZ" />
 	</LinearLayout>
+	<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/MField" android:text="field strength" android:layout_marginBottom="10sp"></TextView>
 
-<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/Field" android:text="field strength"></TextView>
-<TextView android:text="@+id/TextView01" android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/BoundX"></TextView>
-<TextView android:text="@+id/TextView02" android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/BoundY"></TextView>
-<TextView android:text="@+id/TextView03" android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/BoundZ"></TextView>
+	<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Acceleration Sensor"></TextView><LinearLayout android:layout_height="wrap_content"
+		android:layout_width="fill_parent" android:layout_margin="2sp">
+		<com.bel.android.magneticflux.MagneticSurface
+			android:layout_width="100px" android:layout_height="100px"
+			android:layout_margin="2sp" android:id="@+id/AXY" />
+		<com.bel.android.magneticflux.MagneticSurface
+			android:layout_height="100px" android:layout_width="100px"
+			android:layout_margin="2sp" android:id="@+id/AXZ" />
+		<com.bel.android.magneticflux.MagneticSurface
+			android:layout_height="100px" android:layout_width="100px"
+			android:layout_margin="2sp" android:id="@+id/AYZ" />
+	</LinearLayout>
+	<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/AField" android:text="field strength" android:layout_marginBottom="10sp"></TextView>
+
+	<Button android:layout_width="wrap_content"
+		android:layout_height="wrap_content" android:text="Reset" android:id="@+id/Reset" android:layout_gravity="center"></Button>
+
+
+
 </LinearLayout>

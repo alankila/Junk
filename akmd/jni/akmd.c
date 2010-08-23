@@ -56,13 +56,14 @@ static struct timeval next_update;
 
 static int akm_fd, bma150_fd;
 
+/* Accelerometer centering error. */
+static float accelerometer_offset[3];
 /* Temperature is -(value-zero). */
 static char temperature_zero = 0;
+/* The analog offset */
+static int analog_offset[3];
 /* The user requested analog gain */
 static int analog_gain[3];
-/* The user requested analog offset */
-static int analog_offset[3];
-
 /* The actual gain used on hardware */
 static int fixed_analog_gain = 15;
 /* Digital gain to compensate for analog setting. */
@@ -394,24 +395,24 @@ static void build_result_vector(float *a, short temperature, float *m, short *ou
     }
 
     /* Establish the angle in E */
-    out[0] = 180.0f - rad2deg(atan2f(o2l, o1l));
+    out[0] = roundf(180.0f - rad2deg(atan2f(o2l, o1l)));
     /* pitch */
-    out[1] = rad2deg(atan2f(g[1], -g[2]));
+    out[1] = roundf(rad2deg(atan2f(g[1], -g[2])));
     /* roll */
-    out[2] = 90.0f - rad2deg(acosf(g[0] / length(g)));
+    out[2] = roundf(90.0f - rad2deg(acosf(g[0] / length(g))));
     
     out[3] = temperature;
     out[4] = magnetic_quality; /* Magnetic accuracy; result of sphere fit. */
     out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
-    out[6] = a[0] * (720.0f/256.0f);
-    out[7] = a[2] * (720.0f/256.0f);
-    out[8] = a[1] * (-720.0f/256.0f);
+    out[6] = roundf(a[0] * (720.0f/256.0f));
+    out[7] = roundf(a[2] * (720.0f/256.0f));
+    out[8] = roundf(a[1] * (-720.0f/256.0f));
 
-    out[9]  =  m[0];
-    out[10] =  m[1];
-    out[11] = -m[2];
+    out[9] = roundf(m[0]);
+    out[10] = roundf(m[1]);
+    out[11] = roundf(-m[2]);
 }
 
 /****************************************************************************/
@@ -501,7 +502,7 @@ static void readLoop()
     float a[3];
     float m[3];
     for (i = 0; i < 3; i ++) {
-        a[i] = 0.5f * (abuf[0][i] + abuf[1][i]);
+        a[i] = accelerometer_offset[i] + 0.5f * (abuf[0][i] + abuf[1][i]);
         m[i] = 0.5f * (mbuf[0][i] + mbuf[1][i]);
     }
     index = (index + 1) & 1;
@@ -556,23 +557,21 @@ int main(int argc, char **argv)
     int i;
    
     if (argc != 8) {
-        printf("Usage: akmd <hx> <hy> <hz> <gx> <gy> <gz> <tz>\n");
+        printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <tz>\n");
         printf("\n");
-        printf("flux(i) = a * raw(i) * 10^(g(i)*0.4/20) + b * h(i), where\n");
-        printf("  h(i) = -128 .. 127\n");
-        printf("  g(i) = 0 .. 15\n");
-        printf("  a, b = internal scaling parameters\n");
+        printf("ax, ay, az = accelerometer offset.\n");
+        printf("gx, gy, gz = magnetometer gain.\n");
+        printf("tz         = temperature zero offset.\n");
         printf("\n");
-        printf("Attention ROM makers. The analog parameters hx, hy and hz can be left at 0.\n");
-        printf("Per-axis gain needs to be calibrated per device.\n");
-        printf("The Earth's magnetic field is approximately 45 uT and should\n");
-        printf("read the same in every orientation of device.\n");
+        printf("Per-axis accelerometer offset needs to be calibrated per device.\n");
+        printf("Per-axis magnetic gain needs to be calibrated per device type.\n");
+        printf("Temperature offset needs to be calibrated per device type.\n");
         _exit(1);
     }
 
     /* args 1 .. 3, 4 .. 6 */
     for (i = 0; i < 3; i ++) {
-        analog_offset[i] = atoi(argv[1+i]);
+        accelerometer_offset[i] = atof(argv[1+i]) * 256.0f;
         analog_gain[i] = atoi(argv[4+i]);
     }
     temperature_zero = atoi(argv[7]);

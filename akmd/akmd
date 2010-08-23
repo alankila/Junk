@@ -4,7 +4,8 @@
 # 2nd: analog gain 0 .. 15
 # 3rd: 0C reference value 0 .. 255
 
-exec akmd.free \
-      10     0     0 \
-       5     4     6 \
-     112
+ACCELEROMETER_OFFSET="-0.05 -0.12 -0.04"
+MAGNETIC_GAIN="5 4 6"
+TEMPERATURE_ZERO="112"
+
+exec akmd.free $ACCELEROMETER_OFFSET $MAGNETIC_GAIN $TEMPERATURE_ZERO

@@ -11,9 +11,8 @@ import android.util.AttributeSet;
 import android.view.SurfaceView;
 
 public class MagneticSurface extends SurfaceView {
-	private static final int REFERENCE_MAGNETIC_FIELD = 50;
-
-	private final int width, height;
+	private final int radius;
+	private int range;
 
 	private final Canvas cacheCanvas;
 	private final Bitmap cacheBitmap;
@@ -26,10 +25,9 @@ public class MagneticSurface extends SurfaceView {
 		super(context, attrs);
 		setWillNotDraw(false);
 		
-		width = 100;
-		height = 100;
+		radius = 100;
 		
-		cacheBitmap = Bitmap.createBitmap(width, height, Config.ARGB_8888);
+		cacheBitmap = Bitmap.createBitmap(radius, radius, Config.ARGB_8888);
 		cacheCanvas = new Canvas(cacheBitmap);
 
 		white = new Paint();
@@ -56,41 +54,35 @@ public class MagneticSurface extends SurfaceView {
 		float textHeight;
 		
 		cacheCanvas.drawRGB(0, 0, 0);
-		cacheCanvas.drawCircle(width/2, height/2, REFERENCE_MAGNETIC_FIELD, white);
+		cacheCanvas.drawCircle(radius/2, radius/2, radius/2, white);
 		
-		textHeight = height/2 + white.getTextSize() / 2;
-		cacheCanvas.drawText(label         , width/2          , textHeight           , white);
-		textHeight = height/2 + gray.getTextSize() / 2;
-		cacheCanvas.drawText("-"+(width/4) , width/2 - width/4, textHeight           , gray);
-		cacheCanvas.drawText("+"+(width/4) , width/2 + width/4, textHeight           , gray);
-		cacheCanvas.drawText("-"+(height/4), width/2          , textHeight - height/4, gray);
-		cacheCanvas.drawText("+"+(height/4), width/2          , textHeight + height/4, gray);
+		textHeight = radius/2 + white.getTextSize() / 2;
+		cacheCanvas.drawText(label        , radius/2          , textHeight          , white);
+		textHeight = radius/2 + gray.getTextSize() / 2;
+		cacheCanvas.drawText("-"+(range/2), radius/2 - radius/4, textHeight          , gray);
+		cacheCanvas.drawText("+"+(range/2), radius/2 + radius/4, textHeight          , gray);
+		cacheCanvas.drawText("-"+(range/2), radius/2          , textHeight - radius/4, gray);
+		cacheCanvas.drawText("+"+(range/2), radius/2          , textHeight + radius/4, gray);
+		
 		invalidate();
 	}
 	
-	public void putPixel(int x, int y) {
+	public void putPixel(float x, float y) {
 		final Paint color;
-		if (Math.sqrt(x * x + y * y) > REFERENCE_MAGNETIC_FIELD) {
+		if (Math.sqrt(x * x + y * y) > range) {
 			color = red;
 		} else {
 			color = green;
 		}
 		
-		x += width/2;
-		y += height/2;
+		x /= range * 2;
+		y /= range * 2;
 
-		if (x < 0) {
-			x = 0;
-		}
-		if (x > width-1) {
-			x = width-1;
-		}
-		if (y < 0) {
-			y = 0;
-		}
-		if (y > height-1) {
-			y = height;
-		}
+		x += 0.5f;
+		y += 0.5f;
+		
+		x *= radius;
+		y *= radius;
 
 		cacheCanvas.drawPoint(x, y, color);
 		invalidate();
@@ -104,5 +96,9 @@ public class MagneticSurface extends SurfaceView {
 
 	public void setLabel(String string) {
 		label = string;
+	}
+
+	public void setRange(int i) {
+		range = i;
 	}
 }

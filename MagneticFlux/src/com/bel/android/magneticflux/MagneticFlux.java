@@ -12,62 +12,81 @@ import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.TextView;
 
+class SensorGraph implements SensorEventListener {
+	private final String[] accuracyStrings = new String[] {
+			"> 8", "4-8", "2-4", "< 2"
+	};
+
+	private final MagneticSurface xy, xz, yz;
+	private final TextView feedback;
+	
+	private String accuracy;
+	private float minX, minY, minZ;
+	private float maxX, maxY, maxZ;
+
+	protected SensorGraph(MagneticSurface xy, MagneticSurface xz, MagneticSurface yz, TextView fb) {
+		this.xy = xy;
+		this.xz = xz;
+		this.yz = yz;
+		feedback = fb;
+	}
+	
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int accuracy) {
+		this.accuracy = accuracyStrings[accuracy];
+	}
+
+	@Override
+	public void onSensorChanged(SensorEvent event) {
+		float x = event.values[0];
+		float y = event.values[1];
+		float z = event.values[2];
+		
+		if (x < minX) {
+			minX = x;
+		}
+		if (x > maxX) {
+			maxX = x;
+		}
+		if (y < minY) {
+			minY = y;
+		}
+		if (y > maxY) {
+			maxY = y;
+		}
+		if (z < minZ) {
+			minZ = z;
+		}
+		if (z > maxZ) {
+			maxZ = z;
+		}
+
+		xy.putPixel(x, y);
+		xz.putPixel(x, z);
+		yz.putPixel(y, z);
+		
+		feedback.setText(String.format("%+4.2f ± %s at (%+4.1f %+4.1f %+4.1f)",
+				Math.sqrt(x * x + y * y + z * z),
+				accuracy,
+				(maxX+minX) * 0.5f,
+				(maxY+minY) * 0.5f,
+				(maxZ+minZ) * 0.5f));
+	}
+
+	public void reset() {
+		xy.reset();
+		xz.reset();
+		yz.reset();
+		
+		minX = minY = minZ =  9999;
+		maxX = maxY = maxZ = -9999;
+	}
+};
+
 public class MagneticFlux extends Activity {
 	SensorManager sm;
-	
-	MagneticSurface xy, xz, yz;
 
-	TextView field, boundX, boundY, boundZ;
-	
-	private int minX, maxX, minY, maxY, minZ, maxZ;
-	
-	private final SensorEventListener sensorListener = new SensorEventListener() {
-		
-		private int accuracy;
-		
-		private final String[] accuracyStrings = new String[] {
-			"> 8", "4-8", "2-4", "< 2"
-		};
-
-		@Override
-		public void onAccuracyChanged(Sensor sensor, int accuracy) {
-		}
-
-		@Override
-		public void onSensorChanged(SensorEvent event) {
-			int x = (int) event.values[0];
-			int y = (int) event.values[1];
-			int z = (int) event.values[2];
-			
-			if (x < minX) {
-				minX = x;
-			}
-			if (x > maxX) {
-				maxX = x;
-			}
-			if (y < minY) {
-				minY = y;
-			}
-			if (y > maxY) {
-				maxY = y;
-			}
-			if (z < minZ) {
-				minZ = z;
-			}
-			if (z > maxZ) {
-				maxZ = z;
-			}
-
-			xy.putPixel(x, y);
-			xz.putPixel(x, z);
-			yz.putPixel(y, z);
-			
-			field.setText(String.format("%.0f uT with %s uT error", Math.sqrt(x * x + y * y + z * z), accuracyStrings[accuracy]));
-			boundX.setText(String.format("X: %+3d - %+3d uT, center %+3d", minX, maxX, (minX + maxX) / 2));
-			boundY.setText(String.format("Y: %+3d - %+3d uT, center %+3d", minY, maxY, (minY + maxY) / 2));
-			boundZ.setText(String.format("Z: %+3d - %+3d uT, center %+3d", minZ, maxZ, (minZ + maxZ) / 2));
-		}
-	};
+	SensorGraph a, m;
 	
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -75,78 +94,56 @@ public class MagneticFlux extends Activity {
         setContentView(R.layout.main);
       
         sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        xy = (MagneticSurface) findViewById(R.id.XY);
-        xz = (MagneticSurface) findViewById(R.id.XZ);
-        yz = (MagneticSurface) findViewById(R.id.YZ);
         
-        xy.setLabel("XY");
-        xz.setLabel("XZ");
-        yz.setLabel("YZ");
-        
-        field = (TextView) findViewById(R.id.Field);
-        boundX = (TextView) findViewById(R.id.BoundX);
-        boundY = (TextView) findViewById(R.id.BoundY);
-        boundZ = (TextView) findViewById(R.id.BoundZ);
+        MagneticSurface mxy = (MagneticSurface) findViewById(R.id.MXY);
+        MagneticSurface mxz = (MagneticSurface) findViewById(R.id.MXZ);
+        MagneticSurface myz = (MagneticSurface) findViewById(R.id.MYZ);
+        mxy.setRange(50);
+        mxz.setRange(50);
+        myz.setRange(50);
+        mxy.setLabel("XY");
+        mxz.setLabel("XZ");
+        myz.setLabel("YZ");
+        TextView mfield = (TextView) findViewById(R.id.MField);
+        m = new SensorGraph(mxy, mxz, myz, mfield);
+
+        MagneticSurface axy = (MagneticSurface) findViewById(R.id.AXY);
+        MagneticSurface axz = (MagneticSurface) findViewById(R.id.AXZ);
+        MagneticSurface ayz = (MagneticSurface) findViewById(R.id.AYZ);
+        axy.setRange(10);
+        axz.setRange(10);
+        ayz.setRange(10);
+        axy.setLabel("XY");
+        axz.setLabel("XZ");
+        ayz.setLabel("YZ");
+        TextView afield = (TextView) findViewById(R.id.AField);
+        a = new SensorGraph(axy, axz, ayz, afield);
         
         Button reset = (Button) findViewById(R.id.Reset);
         reset.setOnClickListener(new OnClickListener() {
 			@Override
 			public void onClick(View v) {
-		        sm.unregisterListener(sensorListener);
-				
-				xy.reset();
-				xz.reset();
-				yz.reset();
-				
-				minX = 0;
-				maxX = 0;
-				minY = 0;
-				maxY = 0;
-				minZ = 0;
-				maxZ = 0;
-				
-		    	Sensor sensor_m = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
-		        sm.registerListener(sensorListener, sensor_m, SensorManager.SENSOR_DELAY_GAME);
+				a.reset();
+				m.reset();
 			}
         });
-
-    	xy.reset();
-    	xz.reset();
-    	yz.reset();
+        
+        /* XXX kludge: redraw with correct labels. */
+        a.reset();
+        m.reset();
     }	
     
     @Override
     protected void onResume() {
-    	super.onResume();
-
-    	Sensor sensor_m = sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0);
-        sm.registerListener(sensorListener, sensor_m, SensorManager.SENSOR_DELAY_GAME);
+    	super.onStart();
+        sm.registerListener(m, sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0), SensorManager.SENSOR_DELAY_UI);
+        sm.registerListener(a, sm.getSensorList(Sensor.TYPE_ACCELEROMETER).get(0), SensorManager.SENSOR_DELAY_UI);
     }
     
     @Override
-    protected void onStop() {
+    protected void onPause() {
     	super.onStop();
-    	sm.unregisterListener(sensorListener);
+    	sm.unregisterListener(m);
+    	sm.unregisterListener(a);
     }
-    
-    @Override
-    protected void onSaveInstanceState(Bundle outState) {
-    	super.onSaveInstanceState(outState);
-    	outState.putInt("minX", minX);
-    	outState.putInt("maxX", maxX);
-    	outState.putInt("minY", minY);
-    	outState.putInt("minY", maxY);
-    	outState.putInt("minZ", minZ);
-    	outState.putInt("minZ", maxZ);
-    }
-    
-	@Override
-	protected void onRestoreInstanceState(Bundle savedInstanceState) {
-        minX = savedInstanceState.getInt("minX", 0);
-        maxX = savedInstanceState.getInt("maxX", 0);
-        minY = savedInstanceState.getInt("minY", 0);
-        maxY = savedInstanceState.getInt("maxY", 0);        
-        minZ = savedInstanceState.getInt("minZ", 0);
-        maxZ = savedInstanceState.getInt("maxZ", 0);
-	}
 }
