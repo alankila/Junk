@@ -131,16 +131,17 @@ static void calibrate_analog_apply()
 /****************************************************************************/
 /* Digital calibration                                                      */
 /****************************************************************************/
-static int calibrate_digital_rough(float *m, float *rc)
+static void calibrate_magnetometer_analog(float *m)
 {
     int i;
-    const float MINIMUM_FIELD = 25.0f; /* uT */
-    const float CALIBRATE_DECAY = 0.01f;
     const float ANALOG_MAX = 120.0f;
+    /* The rate of forgetting encountering the minimum or maximum bound.
+     * Keeping this fairly large to make it less likely that analog gain
+     * gets adjusted by mistake. */
+    const float CALIBRATE_DECAY = 0.1f;
     static float rc_min[3];
     static float rc_max[3];
 
-    int reliable_axes = 0;
     for (i = 0; i < 3; i ++) {
         /* Autoadjust analog parameters */
         if (m[i] > ANALOG_MAX || m[i] < -ANALOG_MAX) {
@@ -150,7 +151,6 @@ static int calibrate_digital_rough(float *m, float *rc)
             /* The other axes are OK */
             rc_min[i] = 0;
             rc_max[i] = 0;
-            rc[i] = 0;
 
             calibrate_analog_apply();
             continue;
@@ -169,14 +169,13 @@ static int calibrate_digital_rough(float *m, float *rc)
             for (i = 0; i < 3; i ++) {
                 rc_min[i] = 0;
                 rc_max[i] = 0;
-                rc[i] = 0;
             }
             
             calibrate_analog_apply();
             recalculate_digital_gain();
             break;
         }
-        
+
         /* Apply 16-bit digital gain factor to scale 8->12 bits. */
         m[i] *= digital_gain[i];
 
@@ -192,33 +191,18 @@ static int calibrate_digital_rough(float *m, float *rc)
         if (rc_max[i] < m[i]) {
             rc_max[i] = m[i];
         }
-
-        /* Establish rough estimate of the center. */
-        rc[i] = (rc_min[i] + rc_max[i]) * 0.5f;
-
-        /* Only report the axis as good if it is larger than some minimum. */
-        if (rc_max[i] - rc_min[i] >= MINIMUM_FIELD * 2.0f) {
-            reliable_axes ++;
-        }
     }
-
-    return reliable_axes;
 }
 
-static void calibrate_digital_fine_update(float *m, float *rc)
+static void calibrate_magnetometer_update(float *a, float *m)
 {
     /* Record current sample at point cloud using the rough estimate to
      * determine which bin to put the precise measurement in. */
-    float rm[3] = {
-        m[0] - rc[0],
-        m[1] - rc[1],
-        m[2] - rc[2],
-    };
-
     /* keep top 2 bits of normalized rm, and turn it into index */
-    float len = length(rm);
-    rm[0] /= len;
-    rm[1] /= len;
+    float len = length(a);
+    float x = a[0] / len;
+    float y = a[1] / len;
+    float z = a[2]; /* NB: length ignored */
 
     int classify(float v) {
         if (v < -0.5f) {
@@ -234,7 +218,7 @@ static void calibrate_digital_fine_update(float *m, float *rc)
     }
     /* 3rd vector is not independent because we are normalized. It can
      * point above or below the xy plane, though, so total of 2+2+1 bits. */
-    int idx = classify(rm[0]) << 3 | classify(rm[1]) << 1 | classify(rm[2]) >> 1;
+    int idx = classify(x) << 3 | classify(y) << 1 | classify(z) >> 1;
 
     point_cloud[idx].x = m[0];
     point_cloud[idx].y = m[1];
@@ -242,7 +226,7 @@ static void calibrate_digital_fine_update(float *m, float *rc)
     point_cloud[idx].time = next_update.tv_sec;
 }
 
-static float calibrate_digital_fine_fit_eval(float x, float y, float z, float r)
+static float calibrate_magnetometer_eval(float x, float y, float z, float r)
 {
     int i;
 
@@ -262,7 +246,7 @@ static float calibrate_digital_fine_fit_eval(float x, float y, float z, float r)
         n += 1;
     }
 
-    /* Less than 1/4th of bins filled? */
+    /* Less than 1/4th of bins filled with recent data? */
     if (n < PCR/4) {
         return -1.0f;
     }
@@ -270,7 +254,7 @@ static float calibrate_digital_fine_fit_eval(float x, float y, float z, float r)
     return sqrtf(error / n);
 }
 
-static float calibrate_digital_fine_fit(float *fc)
+static float calibrate_magnetometer_fit(float *fc)
 {
     /* Region to use for derivate estimation, 16 = 1 uT.
      * Because the sensor is a bit noisy, it's probably good idea to
@@ -287,15 +271,15 @@ static float calibrate_digital_fine_fit(float *fc)
     float z = fc[2] - d/2;
     float r = fc[3] - d/2;
 
-    float error = calibrate_digital_fine_fit_eval(x, y, z, r);
+    float error = calibrate_magnetometer_eval(x, y, z, r);
     if (error < 0) {
         return error;
     }
 
-    float dx = calibrate_digital_fine_fit_eval(x+d, y, z, r) - error;
-    float dy = calibrate_digital_fine_fit_eval(x, y+d, z, r) - error;
-    float dz = calibrate_digital_fine_fit_eval(x, y, z+d, r) - error;
-    float dr = calibrate_digital_fine_fit_eval(x, y, z, r+d) - error;
+    float dx = calibrate_magnetometer_eval(x+d, y, z, r) - error;
+    float dy = calibrate_magnetometer_eval(x, y+d, z, r) - error;
+    float dz = calibrate_magnetometer_eval(x, y, z+d, r) - error;
+    float dr = calibrate_magnetometer_eval(x, y, z, r+d) - error;
 
     /* Steepest descent */
     fc[0] -= dx * (step / d);
@@ -306,30 +290,29 @@ static float calibrate_digital_fine_fit(float *fc)
     return error;
 }
 
-static int calibrate(float *m)
+static int calibrate_magnetometer(float *a, float *m)
 {
     int i;
 
-    static float rough_calibration[3];
     static float fine_calibration[4];
-    static float error = 256.0f;
+    static float error = 99999.0f;
 
-    /* Get approximate calibration data for sphere fitting algorithm.
-     * Return value is the number of axes where we think we got a good
-     * starting point. */
-    int good_axes = calibrate_digital_rough(m, rough_calibration);
-    if (good_axes == 3) {
-        /* Use sphere fitting algorithm to do finer calibration. */
-        calibrate_digital_fine_update(m, rough_calibration);
-        float fit_error = calibrate_digital_fine_fit(fine_calibration);
-        /* Assume old fit is still good, if phone hasn't moved much lately */
-        if (fit_error >= 0) {
-            error = fit_error;
-        }
+    calibrate_magnetometer_analog(m);
+
+    /* Use sphere fitting algorithm to find optimum surface that fits
+     * the known magnetic vectors interpreted as a point cloud. Theory
+     * suggests the shape of this data is an ellipsoid, ideally a sphere.
+     */
+    calibrate_magnetometer_update(a, m);
+    float fit_error = calibrate_magnetometer_fit(fine_calibration);
+    /* Assume old fit is still good until we can refresh it. */
+    if (fit_error >= 0) {
+        error = fit_error;
     }
     //LOGI("Spherical fit error: %f", error);
 
-    /* Adjust magnetic from 8 bit measurement to final value */
+    /* Adjust magnetic field to calibrated center.
+     * TBD: add axis gain correction. */
     for (i = 0; i < 3; i ++) {
         m[i] -= fine_calibration[i];
     }
@@ -350,19 +333,27 @@ static int calibrate(float *m)
     return 0;
 }
 
+static void calibrate_accelerometer(float *a)
+{
+    /* TBD; needs spherical fit parameters supplied from calibration software */
+    int i;
+    for (i = 0; i < 3; i ++) {
+        a[i] += accelerometer_offset[i];
+    }
+}
+
 /****************************************************************************/
 /* Sensor output calculation                                                */
 /****************************************************************************/
 static void estimate_earth(float *a, float *m, float *g)
 {
     int i;
-    /* When device is not being accelerated, g = a is true. However, when
-     * device is being accelerated, we should check acceleration against the
-     * magnetometer to differentiate rotation of device (where field vector
-     * is turning also) from changes in position (where magnetic field is
-     * unchanged).
-     */
-
+    /* TBD, although Android has deprecated the orientation sensing.
+     * Kind of fair enough; it can't really be done without knowing
+     * device's coarse location because of magnetic field inclination
+     * correction. I could still do sensor fusion here to estimate
+     * gravity from acceleration using magnetometer's knowledge about
+     * device's orientation. */
     for (i = 0; i < 3; i ++) {
         g[i] = a[i];
     }
@@ -370,8 +361,10 @@ static void estimate_earth(float *a, float *m, float *g)
 
 static void build_result_vector(float *a, short temperature, float *m, short *out)
 {
-    int magnetic_quality = calibrate(m);
     static float g[3];
+
+    calibrate_accelerometer(a);
+    int magnetic_quality = calibrate_magnetometer(a, m);
     estimate_earth(a, m, g);
 
     /*
@@ -504,7 +497,7 @@ static void readLoop()
     float a[3];
     float m[3];
     for (i = 0; i < 3; i ++) {
-        a[i] = accelerometer_offset[i] + 0.5f * (abuf[0][i] + abuf[1][i]);
+        a[i] = 0.5f * (abuf[0][i] + abuf[1][i]);
         m[i] = 0.5f * (mbuf[0][i] + mbuf[1][i]);
     }
     index = (index + 1) & 1;
