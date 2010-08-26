@@ -472,9 +472,10 @@ static void readLoop()
     SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
 
     /* Measuring puts readable state to 0. It is going to take
-     * some time before the values are ready. */
-    short amode = AKECS_MODE_MEASURE;
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_SET_MODE, &amode) == 0);
+     * some time before the values are ready. Not using SET_MODE
+     * because it contains mdelay(1) which makes measurements spin CPU! */
+    char akm_data[5] = { 2, AKECS_REG_MS1, AKECS_MODE_MEASURE };
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &akm_data) == 0);
 
     /* BMA150 is constantly measuring and filtering, so it never sleeps.
      * The ioctl in truth returns only 3 values, but buffer in kernel is
@@ -487,7 +488,6 @@ static void readLoop()
 
     /* Significance and range of values can be extracted from
      * online AK 8973 manual. The kernel driver just passes the data on. */
-    char akm_data[5];
     SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
     short temperature = (signed char) -(akm_data[1] + temperature_zero);
     mbuf[index][0] = 127 - (unsigned char) akm_data[2];
