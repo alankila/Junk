@@ -102,15 +102,15 @@ The gain of 0 reads magnetic field variability as something close to -35 .. 35
 in HTC Hero. The gain of 15 gives nearly double that, which still fits well
 into single 8-bit value.
 
-I would suggest ROM authors to use logcat when booting their phone and note
-the range adjustment messages sent by akmd. After that, the shell script
-wrapper that runs the real akmd can be changed to start from good settings.
-It is fairly likely that user's devices will work well from the vendor's
-settings.
-
 Also, the analog gain across three axes should be checked to see that the
-sensor reports about 45 uT magnetic field in all directions. To this end, I
-designed a utility called MagneticFlux which is on my Junk github repository.
+sensor reports about the same value of the magnetic field in all directions.
+Preferably the field's strength would also be calibrated to show the correct
+value, but that requires a reference instrument to measure it with. This
+akmd is currently not capable of automatically adjusting the magnetic gain.
+
+There is a bug in HTC kernel where setting the magnetic sensor to measuring
+mode imparts a 1 millisecond CPU busyloop via mdelay(1) in AKECS_SetMode. The
+new kernel function usleep() should be used there.
 
 Yaw, Pitch, Roll
 ----------------
@@ -123,9 +123,7 @@ and then calculating the component angle in the tangent space.
 
 Azimuth defined this way does not depend on device's orientation, and the
 needle's orientation does not change much when the device is rotated, if
-calibration is good. However, turning the device past the upright
-position flips the needle around, whereas rolling the device does not.
-These are simply bugs that need to be fixed.
+calibration is good.
 
 Pitch and roll are estimated from accelerometer by performing
 spherical-to-cartesian transformation. Currently magnetometer reading is not
