@@ -33,7 +33,7 @@
 #define BMA150_NAME "/dev/bma150"
 
 #define SUCCEED(...)\
-    do { if (! (__VA_ARGS__)) {                                                \
+    do { if (! (__VA_ARGS__)) {                                            \
         LOGI(__FILE__ " ioctl on line %d: %s", __LINE__, strerror(errno)); \
         exit(1);                                                           \
     } } while (0)
@@ -348,14 +348,21 @@ static void calibrate_accelerometer(float *a)
 static void estimate_earth(float *a, float *m, float *g)
 {
     int i;
-    /* TBD, although Android has deprecated the orientation sensing.
-     * Kind of fair enough; it can't really be done without knowing
-     * device's coarse location because of magnetic field inclination
-     * correction. I could still do sensor fusion here to estimate
-     * gravity from acceleration using magnetometer's knowledge about
-     * device's orientation. */
+    static float mh[3];
+   
+    float g_l = length(g);
+    float m_l = length(m);
+    float mh_l = length(mh);
+
     for (i = 0; i < 3; i ++) {
-        g[i] = a[i];
+        /* Rapidly correct gravity based on changes in magnetometer direction */
+        if (m_l != 0 && mh_l != 0) {
+            g[i] += (mh[i] / mh_l - m[i] / m_l) * g_l;
+        }
+        mh[i] = m[i];
+        
+        /* Slowly correct gravity towards general acceleration direction */
+        g[i] = g[i] * 0.99f + a[i] * 0.01f;
     }
 }
 
@@ -366,12 +373,6 @@ static void build_result_vector(float *a, short temperature, float *m, short *ou
     calibrate_accelerometer(a);
     int magnetic_quality = calibrate_magnetometer(a, m);
     estimate_earth(a, m, g);
-
-    /*
-     * I define yaw in the tangent plane E of the Earth, where direction
-     * o2 points towards magnetic North.
-     * measured within the tangent space.
-     */
 
     /* From g, we need to discover 2 suitable vectors. Cross product
      * is used to establish orthogonal basis in E. */
