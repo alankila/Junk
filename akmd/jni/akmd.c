@@ -90,6 +90,33 @@ static float length(float *a)
 }
 
 /****************************************************************************/
+/* Quaternion arithmetics                                                   */
+/****************************************************************************/
+typedef struct {
+    float w, x, y, z;
+} quaternion_t;
+
+static void quat(float a, float *v, quaternion_t *q)
+{
+    a *= 0.5f;
+    float sina = sinf(a);
+    float cosa = cosf(a);
+
+    q->w = cosa;
+    q->x = v[0] * sina;
+    q->y = v[1] * sina;
+    q->z = v[2] * sina;
+}
+
+static void quat_mul(quaternion_t *a, quaternion_t *b, quaternion_t *c)
+{
+    c->w = a->w*b->w - a->x*b->x - a->y*b->y - a->z*b->z;
+    c->x = a->w*b->x + a->x*b->w + a->y*b->z - a->z*b->y;
+    c->y = a->w*b->y - a->x*b->z + a->y*b->w + a->z*b->x;
+    c->z = a->w*b->z + a->x*b->y - a->y*b->x + a->z*b->w;
+}
+
+/****************************************************************************/
 /* Analog calibration                                                       */
 /****************************************************************************/
 static void recalculate_digital_gain()
@@ -349,20 +376,71 @@ static void estimate_earth(float *a, float *m, float *g)
 {
     int i;
     static float mh[3];
-   
+    static float mrh[3];
+
+    /* This quaternion represents the shortest possible rotation
+     * between mh and a. */
+    quaternion_t q;
+    {  
+        float a_cross_mh[3];
+        cross_product(a, mh, a_cross_mh);
+        float a_cross_mh_l = length(a_cross_mh);
+
+        float a_l = length(a);
+        float mh_l = length(mh);
+        if (a_l == 0 || mh_l == 0 || a_cross_mh_l == 0) {
+            q.w = 0;
+            q.x = 1;
+            q.y = 0;
+            q.z = 0;
+        } else {
+            float a_dot_mh = dot(a, mh) / (a_l * mh_l);
+
+            a_cross_mh[0] /= a_cross_mh_l;
+            a_cross_mh[1] /= a_cross_mh_l;
+            a_cross_mh[2] /= a_cross_mh_l;
+
+            quat(acosf(a_dot_mh), a_cross_mh, &q);
+        }
+    }
+
+    /* Now rotate m on top of a:
+     * m' = q * m * q^-1 */
+    quaternion_t qm;
+    qm.w = 0;
+    qm.x = m[0];
+    qm.y = m[1];
+    qm.z = m[2];
+
+    quaternion_t tmp;
+    quat_mul(&q, &qm, &tmp);
+    q.x = -q.x;
+    q.y = -q.y;
+    q.z = -q.z;
+    quat_mul(&tmp, &q, &qm);
+
+    /* Turn the quaternion back to vector, compare with previous, adjust g */
+    float mr[3];
+    mr[0] = qm.x;
+    mr[1] = qm.y;
+    mr[2] = qm.z;
+
+    float mr_l = length(mr);
+    if (mr_l != 0) {
+        mr[0] /= mr_l;
+        mr[1] /= mr_l;
+        mr[2] /= mr_l;
+    }
     float g_l = length(g);
-    float m_l = length(m);
-    float mh_l = length(mh);
 
     for (i = 0; i < 3; i ++) {
-        /* Rapidly correct gravity based on changes in magnetometer direction */
-        if (m_l != 0 && mh_l != 0) {
-            g[i] += (mh[i] / mh_l - m[i] / m_l) * g_l;
-        }
-        mh[i] = m[i];
-        
         /* Slowly correct gravity towards general acceleration direction */
         g[i] = g[i] * 0.99f + a[i] * 0.01f;
+        /* Rapidly adjust based on change in magnetic vector */
+        g[i] += (mr[i] - mrh[i]) * g_l;
+ 
+        mrh[i] = mr[i];
+        mh[i] = m[i];
     }
 }
 
