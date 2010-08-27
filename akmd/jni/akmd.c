@@ -375,18 +375,18 @@ static void calibrate_accelerometer(float *a)
 static void estimate_earth(float *a, float *m, float *g)
 {
     int i;
+#if 0
     static float mh[3];
-    static float mrh[3];
-
+    float a_l = length(a);
+    
     /* This quaternion represents the shortest possible rotation
-     * between mh and a. */
+     * between mh and g. */
     quaternion_t q;
     {  
         float a_cross_mh[3];
-        cross_product(a, mh, a_cross_mh);
+        cross_product(mh, a, a_cross_mh);
         float a_cross_mh_l = length(a_cross_mh);
 
-        float a_l = length(a);
         float mh_l = length(mh);
         if (a_l == 0 || mh_l == 0 || a_cross_mh_l == 0) {
             q.w = 0;
@@ -404,7 +404,7 @@ static void estimate_earth(float *a, float *m, float *g)
         }
     }
 
-    /* Now rotate m on top of a:
+    /* Now rotate m relative to mh:
      * m' = q * m * q^-1 */
     quaternion_t qm;
     qm.w = 0;
@@ -426,21 +426,18 @@ static void estimate_earth(float *a, float *m, float *g)
     mr[2] = qm.z;
 
     float mr_l = length(mr);
-    if (mr_l != 0) {
-        mr[0] /= mr_l;
-        mr[1] /= mr_l;
-        mr[2] /= mr_l;
-    }
-    float g_l = length(g);
-
+#endif
     for (i = 0; i < 3; i ++) {
         /* Slowly correct gravity towards general acceleration direction */
-        g[i] = g[i] * 0.99f + a[i] * 0.01f;
+        g[i] = g[i] * 0.9f + a[i] * 0.1f;
         /* Rapidly adjust based on change in magnetic vector */
-        g[i] += (mr[i] - mrh[i]) * g_l;
+#if 0
+        if (mr_l != 0) {
+            g[i] -= mr[i] / mr_l * a_l - a[i];
+        }
  
-        mrh[i] = mr[i];
         mh[i] = m[i];
+#endif
     }
 }
 
