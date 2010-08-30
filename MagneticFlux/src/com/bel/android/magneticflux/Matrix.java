@@ -203,7 +203,7 @@ public class Matrix {
 	 * @return true if elimination was possible (Matrix was not singular)
 	 */
 	public boolean calculateReducedRowEchelonForm() {
-		for (int r1 = 0; r1 < rows; r1 ++) {
+		for (int r1 = 0; r1 < rows-1; r1 ++) {
 			int maxrow = r1;
 			for (int r2 = r1 + 1; r2 < rows; r2 ++) {
 				if (Math.abs(values[r2][r1]) > Math.abs(values[maxrow][r1])) {
