@@ -191,7 +191,7 @@ public class Matrix {
 				a.values[r][c1] = values[r][c1];
 			}
 			for (int c2 = 0; c2 < o.cols; c2 ++) {
-				a.values[r][cols + c2] = values[r][c2];
+				a.values[r][cols + c2] = o.values[r][c2];
 			}
 		}
 		return a;
@@ -218,7 +218,7 @@ public class Matrix {
 				
 			for (int r2 = r1 + 1; r2 < rows; r2 ++) {
 				float f = values[r2][r1] / values[r1][r1];
-				for (int c = 0; c < cols; c ++) {
+				for (int c = r1; c < cols; c ++) {
 					values[r2][c] -= values[r1][c] * f;
 				}
 			}
@@ -227,8 +227,8 @@ public class Matrix {
 		for (int r1 = rows-1; r1 >= 0; r1 --) {
 			float f = values[r1][r1];
 			for (int r2 = 0; r2 < r1; r2 ++) {
-				for (int c = cols-1; c >= 0; c --) {
-					values[r2][c] -= values[r1][c] * values[r2][c] / f;
+				for (int c = cols-1; c >= r1; c --) {
+					values[r2][c] -= values[r1][c] * values[r2][r1] / f;
 				}
 			}
 			
@@ -255,15 +255,13 @@ public class Matrix {
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
 		for (int r = 0; r < rows; r ++) {
-			if (r != 0) {
-				sb.append("\n");
-			}
+			sb.append("\n");
 			sb.append("[");
 			for (int c = 0; c < cols; c ++) {
 				if (c != 0) {
 					sb.append(" ");
 				}
-				sb.append(String.format("%10.2f", c));
+				sb.append(String.format("%10.2f", values[r][c]));
 			}
 			sb.append("]");
 		}

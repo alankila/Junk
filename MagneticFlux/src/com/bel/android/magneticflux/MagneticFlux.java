@@ -84,6 +84,7 @@ class SensorGraph implements SensorEventListener {
 };
 
 public class MagneticFlux extends Activity {
+	//private static final String TAG = MagneticFlux.class.getSimpleName();
 	SensorManager sm;
 
 	SensorGraph a, m;
@@ -92,7 +93,7 @@ public class MagneticFlux extends Activity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
-      
+        
         sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         
         MagneticSurface mxy = (MagneticSurface) findViewById(R.id.MXY);
@@ -133,7 +134,7 @@ public class MagneticFlux extends Activity {
         m.reset();
     }	
     
-    @Override
+	@Override
     protected void onResume() {
     	super.onStart();
         sm.registerListener(m, sm.getSensorList(Sensor.TYPE_MAGNETIC_FIELD).get(0), SensorManager.SENSOR_DELAY_UI);
