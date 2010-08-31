@@ -162,7 +162,7 @@ static void calibrate_analog_apply()
 /****************************************************************************/
 static void calibrate_magnetometer_analog(float *m)
 {
-    const float ANALOG_MAX = 120.0f;
+    const float ANALOG_MAX = 126.0f;
     /* The rate of forgetting encountering the minimum or maximum bound.
      * Keeping this fairly large to make it less likely that analog gain
      * gets adjusted by mistake. */
@@ -180,6 +180,11 @@ static void calibrate_magnetometer_analog(float *m)
             rc_min[i] = 0;
             rc_max[i] = 0;
 
+            /* Destroy all calibration state, we'll have to start over. */
+            for (int j = 0; j < PCR; j ++) {
+                point_cloud[j].time = 0;
+            }
+
             calibrate_analog_apply();
             continue;
         }
@@ -188,24 +193,21 @@ static void calibrate_magnetometer_analog(float *m)
          * we risk having to constantly adjust the analog gain. We
          * should be able to detect this happening as user rotates the
          * device. */
-        if (rc_max[i] - rc_min[i] > ANALOG_MAX * 2 * digital_gain[i]
+        if (rc_max[i] - rc_min[i] > ANALOG_MAX * 1.9f
             && fixed_analog_gain > 0) {
             fixed_analog_gain -= 1;
             LOGI("Adjusting analog gain to %d", fixed_analog_gain);
     
             /* Everything will change. Trash state and return. */
-            for (int i = 0; i < 3; i ++) {
-                rc_min[i] = 0;
-                rc_max[i] = 0;
+            for (int j = 0; j < 3; j ++) {
+                rc_min[j] = 0;
+                rc_max[j] = 0;
             }
             
             calibrate_analog_apply();
             recalculate_digital_gain();
             break;
         }
-
-        /* Apply 16-bit digital gain factor to scale 8->12 bits. */
-        m[i] *= digital_gain[i];
 
         rc_min[i] += CALIBRATE_DECAY;
         rc_max[i] -= CALIBRATE_DECAY;
@@ -219,6 +221,9 @@ static void calibrate_magnetometer_analog(float *m)
         if (rc_max[i] < m[i]) {
             rc_max[i] = m[i];
         }
+        
+        /* Apply 16-bit digital gain factor to scale 8->12 bits. */
+        m[i] *= digital_gain[i];
     }
 }
 
