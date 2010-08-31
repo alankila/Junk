@@ -1,5 +1,8 @@
 package com.bel.android.magneticflux;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import android.app.Activity;
 import android.content.Context;
 import android.hardware.Sensor;
@@ -11,6 +14,71 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.TextView;
+
+class Calibrator {
+	private final float[][] knownPoints = new float[32][3];
+
+	private int classify(float v) {
+		if (v < -0.5) {
+			return 0;
+		}
+		if (v < 0) {
+			return 1;
+		}
+		if (v < 0.5) {
+			return 2;
+		}
+		return 3;
+	}
+	
+	public void record(float x, float y, float z) {
+		float len = (float) Math.sqrt(x * x + y * y + z * z);
+		float xn = x / len;
+		float yn = y / len;
+		int idx = classify(xn) << 3 | classify(yn) << 1 | classify(z) >> 1;
+
+		knownPoints[idx] = new float[] { x, y, z };
+	}
+	
+	public float[] extract() {
+		List<float[]> aList = new ArrayList<float[]>();
+		List<float[]> bList = new ArrayList<float[]>();
+		/* Use the points with data to fill in stuff. */
+		for (float[] f : knownPoints) {
+			if (f[0] != 0 || f[1] != 0 || f[2] != 0) {
+				bList.add(new float[] { f[0] * f[0] });
+				aList.add(new float[] {
+						-2 * f[0],
+						f[1] * f[1],
+						-2 * f[1],
+						f[2] * f[2],
+						-2 * f[2],
+						1,
+				});
+			}
+		}
+		
+		Matrix a = new Matrix(aList.toArray(new float[aList.size()][3]));
+		Matrix b = new Matrix(bList.toArray(new float[bList.size()][1]));
+		Matrix x = MatrixUtil.leastSquares(a, b);
+		float[] xv = x.getColumn(0);
+		
+		/* The result vector is composed of terms:
+		 * 
+		 * x0, k2, k2 * y0, k3, k3 * z0, k4,
+		 * 
+		 * and k2 = (1+sx)^2 / (1+sy)^2, k3 = (1+sx)^2 / (1+sz)^2.
+		 */
+		return new float[] {
+				xv[0],
+				xv[2] / xv[1],
+				xv[4] / xv[3],
+				1,
+				1 / (float) Math.sqrt(xv[1]),
+				1 / (float) Math.sqrt(xv[3]),
+		};
+	}
+}
 
 class SensorGraph implements SensorEventListener {
 	private final String[] accuracyStrings = new String[] {
@@ -24,6 +92,8 @@ class SensorGraph implements SensorEventListener {
 	private float minX, minY, minZ;
 	private float maxX, maxY, maxZ;
 
+	private Calibrator calibrator;
+	
 	protected SensorGraph(MagneticSurface xy, MagneticSurface xz, MagneticSurface yz, TextView fb) {
 		this.xy = xy;
 		this.xz = xz;
@@ -41,6 +111,10 @@ class SensorGraph implements SensorEventListener {
 		float x = event.values[0];
 		float y = event.values[1];
 		float z = event.values[2];
+		
+		if (calibrator != null) {
+			calibrator.record(x, y, z);
+		}
 		
 		if (x < minX) {
 			minX = x;
@@ -73,6 +147,26 @@ class SensorGraph implements SensorEventListener {
 				(maxZ+minZ) * 0.5f));
 	}
 
+	public void startCalibration() {
+		calibrator = new Calibrator();
+	}
+	
+	/**
+	 * System to be solved is basically:
+	 * 
+	 * (x - x0)^2/(1+sx)^2 + (y - y0)^2/(1+sy)^2 + (z - z0)^2/(1+sz)^2 = R^2
+	 * 
+	 * where x, y, z are measurement facts, and sx, sy, sz, R are found via helper
+	 * variables.
+	 * 
+	 * @return 6 calibration parameters (x0, y0, z0, 1, 1+sy, 1+sz)
+	 */
+	public float[] endCalibration() {
+		float[] data = calibrator.extract();
+		calibrator = null;
+		return data;
+	}
+	
 	public void reset() {
 		xy.reset();
 		xz.reset();

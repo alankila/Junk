@@ -10,7 +10,9 @@ public class MatrixUtil {
 	 */
 	public static Matrix solve(Matrix a, Matrix b) {
 		Matrix v = a.augment(b);
-		v.calculateReducedRowEchelonForm();
+		if (! v.calculateReducedRowEchelonForm()) {
+			return null;
+		}
 		return new Matrix(v.getColumn(a.cols));
 	}
 	
