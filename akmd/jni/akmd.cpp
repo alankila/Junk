@@ -125,8 +125,7 @@ static void quat_mul(quaternion_t *a, quaternion_t *b, quaternion_t *c)
 /****************************************************************************/
 static void recalculate_digital_gain()
 {
-    int i;
-    for (i = 0; i < 3; i ++) {
+    for (int i = 0; i < 3; i ++) {
         /* 0.4 dB per step */
         digital_gain[i] = powf(10.0f, (analog_gain - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
     }
@@ -152,8 +151,7 @@ static void calibrate_analog_apply()
         fixed_analog_gain, fixed_analog_gain, fixed_analog_gain,
     };
 
-    int i;
-    for (i = 0; i < 6; i ++) {
+    for (int i = 0; i < 6; i ++) {
         char rwbuf[5] = { 2, 0xe1+i, params[i] };
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) == 0);
     }
@@ -164,7 +162,6 @@ static void calibrate_analog_apply()
 /****************************************************************************/
 static void calibrate_magnetometer_analog(float *m)
 {
-    int i;
     const float ANALOG_MAX = 120.0f;
     /* The rate of forgetting encountering the minimum or maximum bound.
      * Keeping this fairly large to make it less likely that analog gain
@@ -173,7 +170,7 @@ static void calibrate_magnetometer_analog(float *m)
     static float rc_min[3];
     static float rc_max[3];
 
-    for (i = 0; i < 3; i ++) {
+    for (int i = 0; i < 3; i ++) {
         /* Autoadjust analog parameters */
         if (m[i] > ANALOG_MAX || m[i] < -ANALOG_MAX) {
             analog_offset[i] += m[i] > ANALOG_MAX ? -1 : 1;
@@ -197,7 +194,7 @@ static void calibrate_magnetometer_analog(float *m)
             LOGI("Adjusting analog gain to %d", fixed_analog_gain);
     
             /* Everything will change. Trash state and return. */
-            for (i = 0; i < 3; i ++) {
+            for (int i = 0; i < 3; i ++) {
                 rc_min[i] = 0;
                 rc_max[i] = 0;
             }
@@ -256,8 +253,10 @@ static void calibrate_magnetometer_update(float *a, float *m)
     point_cloud[idx].time = next_update.tv_sec;
 }
 
-static float calibrate_magnetometer_fit(float *fc)
+static void calibrate_magnetometer_ellipsoid_fit(float *fc)
 {
+    static int last_fit_time;
+
     int n = 0;
     for (int i = 0; i < PCR; i ++) {
         if (point_cloud[i].time >= next_update.tv_sec - PCR_USE_TIME) {
@@ -265,10 +264,11 @@ static float calibrate_magnetometer_fit(float *fc)
         }
     }
 
-    /* Less than 1/3rd of bins filled with recent data? No calibration yet. */
-    if (n < PCR/3) {
-        return -1.0f;
+    /* Less than 1/3rd of bins filled with recent data? */
+    if (n < PCR/3 || last_fit_time == next_update.tv_sec) {
+        return;
     }
+    last_fit_time = next_update.tv_sec;
 
     akmd::Matrix* a = new akmd::Matrix(n, 6);
     akmd::Matrix* b = new akmd::Matrix(n, 1);
@@ -278,9 +278,6 @@ static float calibrate_magnetometer_fit(float *fc)
         if (point_cloud[i].time < next_update.tv_sec - PCR_USE_TIME) {
             continue;
         }
-
-        /* Has been used for calibration, remove... */
-        point_cloud[i].time = 0;
 
         float x = point_cloud[i].x;
         float y = point_cloud[i].y;
@@ -298,7 +295,8 @@ static float calibrate_magnetometer_fit(float *fc)
     }
 
     float *x = akmd::Matrix::leastSquares(a, b);
-    LOGI("Raw data: %f %f %f %f %f %f", x[0], x[1], x[2], x[3], x[4], x[5]);
+    delete a;
+    delete b;
 
     fc[0] = x[0];
     fc[1] = x[2] / x[1];
@@ -308,60 +306,29 @@ static float calibrate_magnetometer_fit(float *fc)
     fc[4] = sqrtf(x[1]);
     fc[5] = sqrtf(x[3]);
 
-    LOGI("Updated calibration to: %f %f %f %f %f %f", fc[0], fc[1], fc[2], fc[3], fc[4], fc[5]);
-
     delete[] x;
 }
 
 static int calibrate_magnetometer(float *a, float *m)
 {
-    int i;
-
-    static float fine_calibration[6] = { 0, 0, 0, 1, 1, 1 };
-    static float error = 99999.0f;
+    static float ellipsoid_params[6] = { 0, 0, 0, 1, 1, 1 };
 
     calibrate_magnetometer_analog(m);
-
-    /* Use sphere fitting algorithm to find optimum surface that fits
-     * the known magnetic vectors interpreted as a point cloud. Theory
-     * suggests the shape of this data is an ellipsoid, ideally a sphere.
-     */
     calibrate_magnetometer_update(a, m);
-    float fit_error = calibrate_magnetometer_fit(fine_calibration);
-    /* Assume old fit is still good until we can refresh it. */
-    if (fit_error >= 0) {
-        error = fit_error;
-    }
-    //LOGI("Spherical fit error: %f", error);
+    calibrate_magnetometer_ellipsoid_fit(ellipsoid_params);
 
-    /* Adjust magnetic field to calibrated center.
-     * TBD: add axis gain correction. */
-    for (i = 0; i < 3; i ++) {
-        m[i] -= fine_calibration[i];
-        m[i] *= fine_calibration[i+3];
+    /* Correct for scale and offset. */
+    for (int i = 0; i < 3; i ++) {
+        m[i] -= ellipsoid_params[i];
+        m[i] *= ellipsoid_params[i+3];
     }
 
-    /* 2 uT average error */
-    if (error <= 32.0f) {
-        return 3;
-    }
-    /* 4 uT average error */
-    if (error <= 64.0f) {
-        return 2;
-    }
-    /* 8 uT average error */
-    if (error <= 128.0f) {
-        return 1;
-    }
-    /* Calibration completely whacked. */
-    return 0;
+    return 3;
 }
 
 static void calibrate_accelerometer(float *a)
 {
-    /* TBD; needs spherical fit parameters supplied from calibration software */
-    int i;
-    for (i = 0; i < 3; i ++) {
+    for (int i = 0; i < 3; i ++) {
         a[i] += accelerometer_offset[i];
         a[i] *= accelerometer_scale[i];
     }
@@ -372,7 +339,6 @@ static void calibrate_accelerometer(float *a)
 /****************************************************************************/
 static void estimate_earth(float *a, float *m, float *g)
 {
-    int i;
 #if 0
     static float mh[3];
     float a_l = length(a);
@@ -425,7 +391,7 @@ static void estimate_earth(float *a, float *m, float *g)
 
     float mr_l = length(mr);
 #endif
-    for (i = 0; i < 3; i ++) {
+    for (int i = 0; i < 3; i ++) {
         /* Slowly correct gravity towards general acceleration direction */
         g[i] = g[i] * 0.9f + a[i] * 0.1f;
         /* Rapidly adjust based on change in magnetic vector */
@@ -533,7 +499,6 @@ void sleep_until_next_update()
 
 static void readLoop()
 {
-    int i;
     static int abuf[2][3];
     static int mbuf[2][3];
     static int index = 0;
@@ -575,7 +540,7 @@ static void readLoop()
 
     float a[3];
     float m[3];
-    for (i = 0; i < 3; i ++) {
+    for (int i = 0; i < 3; i ++) {
         a[i] = 0.5f * (abuf[0][i] + abuf[1][i]);
         m[i] = 0.5f * (mbuf[0][i] + mbuf[1][i]);
     }
@@ -628,8 +593,6 @@ void *aot_tracking_thread(void *arg)
 
 int main(int argc, char **argv)
 {
-    int i;
-   
     if (argc != 9) {
         printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <mg> <tz>\n");
         printf("\n");
@@ -645,7 +608,7 @@ int main(int argc, char **argv)
     }
 
     /* args 1 .. 3, 4 .. 6 */
-    for (i = 0; i < 3; i ++) {
+    for (int i = 0; i < 3; i ++) {
         accelerometer_offset[i] = atof(argv[1+i]) / 9.80665f * 256.0f;
         accelerometer_scale[i] = atof(argv[4+i]);
     }
