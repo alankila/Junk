@@ -42,17 +42,18 @@
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
 
-/* Point Cloud Resolution */
-#define PCR 32           /* record this number of vectors around the device */
-#define PCR_USE_TIME 120 /* time the vector is good for (seconds) */
-
 typedef struct {
     float x, y, z;
     int time;
 } point_t;
 
-static point_t acceleration_point_cloud[PCR];
+/* Point Cloud Resolution */
+#define PCR 32           /* record this number of vectors around the device */
+
+#define MAGNETOMETER_VALIDITY 120 /* time the vector is good for (seconds) */
 static point_t magnetometer_point_cloud[PCR];
+#define ACCELERATION_VALIDITY 1800 /* time the vector is good for (seconds) */
+static point_t acceleration_point_cloud[PCR];
 
 static struct timeval current_time;
 static struct timeval next_update;
@@ -193,6 +194,9 @@ static void calibrate_magnetometer_analog(float* m)
     }
 }
 
+#if PCR != 32
+#error "PCR must be 32 for this version of classify()"
+#endif
 static int classify(float v)
 {
     int i = 0;
@@ -221,11 +225,11 @@ static void calibrate_update(point_t* pc, float* a, float* v)
     pc[idx].z = v[2];
 }
 
-static bool calibrate_ellipsoid_fit(point_t* pc, float* fc)
+static bool calibrate_ellipsoid_fit(point_t* pc, float* fc, int validity)
 {
     int n = 0;
     for (int i = 0; i < PCR; i ++) {
-        if (pc[i].time >= next_update.tv_sec - PCR_USE_TIME) {
+        if (pc[i].time >= next_update.tv_sec - validity) {
             n ++;
         }
     }
@@ -240,7 +244,7 @@ static bool calibrate_ellipsoid_fit(point_t* pc, float* fc)
 
     n = 0;
     for (int i = 0; i < PCR; i ++) {
-        if (pc[i].time < next_update.tv_sec - PCR_USE_TIME) {
+        if (pc[i].time < next_update.tv_sec - validity) {
             continue;
         }
 
@@ -284,7 +288,7 @@ static int calibrate_magnetometer(float* a, float* m)
     calibrate_magnetometer_analog(m);
     calibrate_update(magnetometer_point_cloud, a, m);
     if (last_fit_time != next_update.tv_sec) {
-        if (calibrate_ellipsoid_fit(magnetometer_point_cloud, ellipsoid_params)) {
+        if (calibrate_ellipsoid_fit(magnetometer_point_cloud, ellipsoid_params, MAGNETOMETER_VALIDITY)) {
             last_fit_time = next_update.tv_sec;
         }
     }
@@ -316,8 +320,8 @@ static void calibrate_accelerometer(float* a, float* g)
 
         /* Going to trust this point. */
         calibrate_update(acceleration_point_cloud, a, g);
-        if (last_fit_time < next_update.tv_sec - 15) {
-            if (calibrate_ellipsoid_fit(acceleration_point_cloud, ellipsoid_params)) {
+        if (last_fit_time < next_update.tv_sec - 60) {
+            if (calibrate_ellipsoid_fit(acceleration_point_cloud, ellipsoid_params, ACCELERATION_VALIDITY)) {
                 last_fit_time = next_update.tv_sec;
             }
         }
