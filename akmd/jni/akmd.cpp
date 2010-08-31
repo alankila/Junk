@@ -30,20 +30,22 @@
 #include "linux-2.6.29/bma150.h"
 
 #include "matrix.hpp"
+#include "vector.hpp"
 
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
 
-#define SUCCEED(...)\
-    do { if (! (__VA_ARGS__)) {                                            \
+#define SUCCEED(...) if (! (__VA_ARGS__)) {                                \
         LOGI(__FILE__ " ioctl on line %d: %s", __LINE__, strerror(errno)); \
         exit(1);                                                           \
-    } } while (0)
+    }
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
 
+using namespace akmd;
+
 typedef struct {
-    float x, y, z;
+    Vector v;
     int time;
 } point_t;
 
@@ -69,27 +71,7 @@ static int analog_gain;
 /* The actual gain used on hardware */
 static int fixed_analog_gain = 15;
 /* Digital gain to compensate for analog setting. */
-static float digital_gain[3];
-
-/****************************************************************************/
-/* Vector utilities                                                         */
-/****************************************************************************/
-static void cross_product(float* a, float* b, float* c)
-{
-    c[0] = a[1] * b[2] - a[2] * b[1];
-    c[1] = a[2] * b[0] - a[0] * b[2];
-    c[2] = a[0] * b[1] - a[1] * b[0];
-}
-
-static float dot(float* a, float* b)
-{
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-static float length(float* a)
-{
-    return sqrtf(dot(a, a));
-}
+static float digital_gain;
 
 /****************************************************************************/
 /* Analog calibration                                                       */
@@ -119,16 +101,13 @@ static void calibrate_analog_apply()
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) == 0);
     }
     
-    for (int i = 0; i < 3; i ++) {
-        /* 0.4 dB per step */
-        digital_gain[i] = powf(10.0f, (analog_gain - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
-    }
+    digital_gain = powf(10.0f, (analog_gain - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
 }
 
 /****************************************************************************/
 /* Digital calibration                                                      */
 /****************************************************************************/
-static void calibrate_magnetometer_analog(float* m)
+static void calibrate_magnetometer_analog_helper(float val, int i)
 {
     const float ANALOG_MAX = 126.0f;
     /* The rate of forgetting encountering the minimum or maximum bound.
@@ -138,60 +117,65 @@ static void calibrate_magnetometer_analog(float* m)
     static float rc_min[3];
     static float rc_max[3];
 
-    for (int i = 0; i < 3; i ++) {
-        /* Autoadjust analog parameters */
-        if (m[i] > ANALOG_MAX || m[i] < -ANALOG_MAX) {
-            analog_offset[i] += m[i] > ANALOG_MAX ? -1 : 1;
-            LOGI("Adjusting analog axis %d to %d because of value %f", i, analog_offset[i], m[i]);
+    /* Autoadjust analog parameters */
+    if (val > ANALOG_MAX || val < -ANALOG_MAX) {
+        analog_offset[i] += val > ANALOG_MAX ? -1 : 1;
+        LOGI("Adjusting analog axis %d to %d because of value %f", i, analog_offset[i], val);
 
-            /* The other axes are OK */
-            rc_min[i] = 0;
-            rc_max[i] = 0;
+        /* The other axes are OK */
+        rc_min[i] = 0;
+        rc_max[i] = 0;
 
-            /* Destroy all calibration state, we'll have to start over. */
-            for (int j = 0; j < PCR; j ++) {
-                magnetometer_point_cloud[j].time = 0;
-            }
-
-            calibrate_analog_apply();
-            continue;
+        /* Destroy all calibration state, we'll have to start over. */
+        for (int j = 0; j < PCR; j ++) {
+            magnetometer_point_cloud[j].time = 0;
         }
 
-        /* If recorded digital bounds get close to completely used,
-         * we risk having to constantly adjust the analog gain. We
-         * should be able to detect this happening as user rotates the
-         * device. */
-        if (rc_max[i] - rc_min[i] > ANALOG_MAX * 1.9f
-            && fixed_analog_gain > 0) {
-            fixed_analog_gain -= 1;
-            LOGI("Adjusting analog gain to %d", fixed_analog_gain);
-    
-            /* Everything will change. Trash state and return. */
-            for (int j = 0; j < 3; j ++) {
-                rc_min[j] = 0;
-                rc_max[j] = 0;
-            }
-            
-            calibrate_analog_apply();
-            break;
-        }
+        calibrate_analog_apply();
+        return;
+    }
 
-        rc_min[i] += CALIBRATE_DECAY;
-        rc_max[i] -= CALIBRATE_DECAY;
+    /* If recorded digital bounds get close to completely used,
+     * we risk having to constantly adjust the analog gain. We
+     * should be able to detect this happening as user rotates the
+     * device. */
+    if (rc_max[i] - rc_min[i] > ANALOG_MAX * 1.9f
+        && fixed_analog_gain > 0) {
+        fixed_analog_gain -= 1;
+        LOGI("Adjusting analog gain to %d", fixed_analog_gain);
 
-        /* minimum value seen */
-        if (rc_min[i] > m[i]) {
-            rc_min[i] = m[i];
-        }
-
-        /* maximum value seen */
-        if (rc_max[i] < m[i]) {
-            rc_max[i] = m[i];
+        /* Everything will change. Trash state and return. */
+        for (int j = 0; j < 3; j ++) {
+            rc_min[j] = 0;
+            rc_max[j] = 0;
         }
         
-        /* Apply 16-bit digital gain factor to scale 8->12 bits. */
-        m[i] *= digital_gain[i];
+        calibrate_analog_apply();
+        return;
     }
+
+    rc_min[i] += CALIBRATE_DECAY;
+    rc_max[i] -= CALIBRATE_DECAY;
+
+    /* minimum value seen */
+    if (rc_min[i] > val) {
+        rc_min[i] = val;
+    }
+
+    /* maximum value seen */
+    if (rc_max[i] < val) {
+        rc_max[i] = val;
+    }
+}
+
+static void calibrate_magnetometer_analog(Vector* m)
+{
+    calibrate_magnetometer_analog_helper(m->x, 0);
+    calibrate_magnetometer_analog_helper(m->y, 1);
+    calibrate_magnetometer_analog_helper(m->z, 2);    
+
+    /* Apply 16-bit digital gain factor to scale 8->12 bits. */
+    *m = m->multiply(digital_gain);
 }
 
 #if PCR != 32
@@ -208,24 +192,24 @@ static int classify(float v)
     return i;
 }
 
-static void calibrate_update(point_t* pc, float* a, float* v)
+static void calibrate_update(point_t* pc, Vector a, Vector v)
 {
-    float len = length(a);
-    if (a == 0) {
+    float len = a.length();
+    if (len == 0) {
         return;
     }
 
     /* 3rd vector is not independent because we are normalized. It can
      * point above or below the xy plane, though, so total of 2+2+1 bits. */
-    int idx = classify(a[0]/len) << 3 | classify(a[1]/len) << 1 | (a[2] > 0 ? 1 : 0);
+    int idx = classify(a.x/len) << 3 | classify(a.y/len) << 1 | (a.z > 0 ? 1 : 0);
 
     pc[idx].time = next_update.tv_sec;
-    pc[idx].x = v[0];
-    pc[idx].y = v[1];
-    pc[idx].z = v[2];
+    pc[idx].v.x = v.x;
+    pc[idx].v.y = v.y;
+    pc[idx].v.z = v.z;
 }
 
-static bool calibrate_ellipsoid_fit(point_t* pc, float* fc, int validity)
+static bool calibrate_ellipsoid_fit(point_t* pc, Vector* fc, int validity)
 {
     int n = 0;
     for (int i = 0; i < PCR; i ++) {
@@ -239,8 +223,8 @@ static bool calibrate_ellipsoid_fit(point_t* pc, float* fc, int validity)
         return false;
     }
 
-    akmd::Matrix* a = new akmd::Matrix(n, 6);
-    akmd::Matrix* b = new akmd::Matrix(n, 1);
+    Matrix a = Matrix(n, 6);
+    Matrix b = Matrix(n, 1);
 
     n = 0;
     for (int i = 0; i < PCR; i ++) {
@@ -248,45 +232,46 @@ static bool calibrate_ellipsoid_fit(point_t* pc, float* fc, int validity)
             continue;
         }
 
-        float x = pc[i].x;
-        float y = pc[i].y;
-        float z = pc[i].z;
+        float x = pc[i].v.x;
+        float y = pc[i].v.y;
+        float z = pc[i].v.z;
 
-        b->set(n, 0, -x*x);
-        a->set(n, 0, -2.0f*x);
-        a->set(n, 1, y*y);
-        a->set(n, 2, -2.0f*y);
-        a->set(n, 3, z*z);
-        a->set(n, 4, -2.0f*z);
-        a->set(n, 5, 1.0f);
+        b.set(n, 0, -x*x);
+        a.set(n, 0, -2.0f*x);
+        a.set(n, 1, y*y);
+        a.set(n, 2, -2.0f*y);
+        a.set(n, 3, z*z);
+        a.set(n, 4, -2.0f*z);
+        a.set(n, 5, 1.0f);
 
         n ++;
     }
 
-    float *x = akmd::Matrix::leastSquares(a, b);
-    delete a;
-    delete b;
+    float *x = Matrix::leastSquares(&a, &b);
 
-    fc[0] = x[0];
-    fc[1] = x[2] / x[1];
-    fc[2] = x[4] / x[3];
+    fc[0].x = x[0];
+    fc[0].y = x[2] / x[1];
+    fc[0].z = x[4] / x[3];
 
-    fc[3] = 1;
-    fc[4] = sqrtf(x[1]);
-    fc[5] = sqrtf(x[3]);
+    fc[1].x = 1;
+    fc[1].y = sqrtf(x[1]);
+    fc[1].z = sqrtf(x[3]);
 
     delete[] x;
 
     return true;
 }
 
-static int calibrate_magnetometer(float* a, float* m)
+static int calibrate_magnetometer(Vector a, Vector* m)
 {
     static int last_fit_time;
-    static float ellipsoid_params[6] = { 0, 0, 0, 1, 1, 1 };
+    static Vector ellipsoid_params[2] = {
+        Vector(0, 0, 0),
+        Vector(1, 1, 1),
+    };
 
     calibrate_magnetometer_analog(m);
-    calibrate_update(magnetometer_point_cloud, a, m);
+    calibrate_update(magnetometer_point_cloud, a, *m);
     if (last_fit_time != next_update.tv_sec) {
         if (calibrate_ellipsoid_fit(magnetometer_point_cloud, ellipsoid_params, MAGNETOMETER_VALIDITY)) {
             last_fit_time = next_update.tv_sec;
@@ -294,37 +279,36 @@ static int calibrate_magnetometer(float* a, float* m)
     }
 
     /* Correct for scale and offset. */
-    for (int i = 0; i < 3; i ++) {
-        m[i] -= ellipsoid_params[i];
-        m[i] *= ellipsoid_params[i+3];
-    }
+    *m = m->add(ellipsoid_params[0].multiply(-1));
+    *m = m->multiply(ellipsoid_params[1]);
 
     return 3;
 }
 
-static void calibrate_accelerometer(float* a)
+static void calibrate_accelerometer(Vector* a)
 {
+    static Vector g;
     static int last_fit_time;
-    static float ellipsoid_params[6] = { 0, 0, 0, 1, 1, 1 };
-    
-    static float g[3];
-    for (int i = 0; i < 3; i ++) {
-        g[i] = g[i] * 0.8f + a[i] * 0.2f;
-    }
+    static Vector ellipsoid_params[2] = {
+        Vector(0, 0, 0),
+        Vector(1, 1, 1),
+    };
+
+    g = g.multiply(0.8f).add(a->multiply(0.2f));
 
     /* a and g must have about the same length and point to about same
      * direction before I trust the value accumulated to g */
-    float al = length(a);
-    float gl = length(g);
+    float al = a->length();
+    float gl = g.length();
 
     /* The alignment of vector lengths and directions must be better than 5 % */
     if (al != 0
         && gl != 0
         && fabsf(al - gl) < 0.04f
-        && dot(a, g) / (al * gl) > 0.96f) {
+        && a->dot(g) / (al * gl) > 0.96f) {
 
         /* Going to trust this point. */
-        calibrate_update(acceleration_point_cloud, a, g);
+        calibrate_update(acceleration_point_cloud, *a, g);
         if (last_fit_time < next_update.tv_sec - 60) {
             if (calibrate_ellipsoid_fit(acceleration_point_cloud, ellipsoid_params, ACCELERATION_VALIDITY)) {
                 last_fit_time = next_update.tv_sec;
@@ -332,66 +316,59 @@ static void calibrate_accelerometer(float* a)
         }
     }
 
-    for (int i = 0; i < 3; i ++) {
-        a[i] -= ellipsoid_params[i];
-        a[i] *= ellipsoid_params[i+3];
-    }
+    *a = a->add(ellipsoid_params[0].multiply(-1));
+    *a = a->multiply(ellipsoid_params[1]);
 }
 
 /****************************************************************************/
 /* Sensor output calculation                                                */
 /****************************************************************************/
-static void estimate_earth(float* a, float* g)
+static void estimate_earth(Vector a, Vector* g)
 {
-    for (int i = 0; i < 3; i ++) {
-        /* Slowly correct gravity towards general acceleration direction */
-        g[i] = g[i] * 0.9f + a[i] * 0.1f;
-    }
+    *g = g->multiply(0.9f).add(a.multiply(0.1f));
 }
 
 static int rad2deg(float v) {
     return v * (180.0f / (float) M_PI);
 }
 
-static void build_result_vector(float* a, short temperature, float* m, short* out)
+static void build_result_vector(Vector a, short temperature, Vector m, short* out)
 {
-    static float g[3];
+    static Vector g;
 
-    calibrate_accelerometer(a);
-    int magnetic_quality = calibrate_magnetometer(a, m);
-    estimate_earth(a, g);
+    calibrate_accelerometer(&a);
+    int magnetic_quality = calibrate_magnetometer(a, &m);
+    estimate_earth(a, &g);
 
     /* From g, we need to discover 2 suitable vectors. Cross product
      * is used to establish orthogonal basis in E. */
-    float o1[3];
-    float ref[3] = { -1, 0, 0 };
-    cross_product(g, ref, o1);
-    float o2[3];
-    cross_product(g, o1, o2);
+    Vector ref(-1, 0, 0);
+    Vector o1 = g.cross(ref);
+    Vector o2 = g.cross(o1);
     
     /* Now project magnetic field on components o1 and o2. */
-    float o1l = dot(m, o1) * length(o2);
-    float o2l = dot(m, o2) * length(o1);
+    float o1l = m.dot(o1) * o2.length();
+    float o2l = m.dot(o2) * o1.length();
 
     /* Establish the angle in E */
     out[0] = roundf(180.0f - rad2deg(atan2f(o2l, o1l)));
     /* pitch */
-    out[1] = roundf(rad2deg(atan2f(g[1], -g[2])));
+    out[1] = roundf(rad2deg(atan2f(g.y, -g.z)));
     /* roll */
-    out[2] = roundf(90.0f - rad2deg(acosf(g[0] / length(g))));
+    out[2] = roundf(90.0f - rad2deg(acosf(g.x / g.length())));
     
     out[3] = temperature;
     out[4] = magnetic_quality; /* Magnetic accuracy; result of sphere fit. */
     out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
-    out[6] = roundf(a[0] * (720.0f/256.0f));
-    out[7] = roundf(a[2] * (720.0f/256.0f));
-    out[8] = roundf(a[1] * (-720.0f/256.0f));
+    out[6] = roundf(a.x * (720.0f/256.0f));
+    out[7] = roundf(a.z * (720.0f/256.0f));
+    out[8] = -roundf(a.y * (720.0f/256.0f));
 
-    out[9] = roundf(m[0]);
-    out[10] = roundf(m[1]);
-    out[11] = roundf(-m[2]);
+    out[9] = roundf(m.x);
+    out[10] = roundf(m.y);
+    out[11] = -roundf(m.z);
 }
 
 /****************************************************************************/
@@ -443,8 +420,8 @@ void sleep_until_next_update()
 
 static void readLoop()
 {
-    static int abuf[2][3];
-    static int mbuf[2][3];
+    static Vector abuf[2];
+    static Vector mbuf[2];
     static int index = 0;
 
     /* This ioctl sleeps if the control channel isn't open, so we can use
@@ -470,24 +447,20 @@ static void readLoop()
      * defined as 8 shorts long. */
     short bma150_data[8];
     SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) == 0);
-    abuf[index][0] = bma150_data[0];
-    abuf[index][1] = -bma150_data[1];
-    abuf[index][2] = bma150_data[2];
+    abuf[index].x = bma150_data[0];
+    abuf[index].y = -bma150_data[1];
+    abuf[index].z = bma150_data[2];
 
     /* Significance and range of values can be extracted from
      * online AK 8973 manual. The kernel driver just passes the data on. */
     SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
     short temperature = (signed char) -(akm_data[1] + temperature_zero);
-    mbuf[index][0] = 127 - (unsigned char) akm_data[2];
-    mbuf[index][1] = 127 - (unsigned char) akm_data[3];
-    mbuf[index][2] = 127 - (unsigned char) akm_data[4];
+    mbuf[index].x = 127 - (unsigned char) akm_data[2];
+    mbuf[index].y = 127 - (unsigned char) akm_data[3];
+    mbuf[index].z = 127 - (unsigned char) akm_data[4];
 
-    float a[3];
-    float m[3];
-    for (int i = 0; i < 3; i ++) {
-        a[i] = 0.5f * (abuf[0][i] + abuf[1][i]);
-        m[i] = 0.5f * (mbuf[0][i] + mbuf[1][i]);
-    }
+    Vector a = abuf[0].add(abuf[1]).multiply(0.5f);
+    Vector m = mbuf[0].add(mbuf[1]).multiply(0.5f);
     index = (index + 1) & 1;
 
     /* Calculate and set data readable on compass input. */
