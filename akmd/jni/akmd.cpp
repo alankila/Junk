@@ -72,7 +72,7 @@ static int fixed_analog_gain = 15;
 static float digital_gain[3];
 
 /****************************************************************************/
-/* Some vector utilities                                                    */
+/* Vector utilities                                                         */
 /****************************************************************************/
 static void cross_product(float *a, float *b, float *c)
 {
@@ -92,7 +92,7 @@ static float length(float *a)
 }
 
 /****************************************************************************/
-/* Quaternion arithmetics                                                   */
+/* Quaternion utilities                                                     */
 /****************************************************************************/
 typedef struct {
     float w, x, y, z;
@@ -223,6 +223,19 @@ static void calibrate_magnetometer_analog(float *m)
     }
 }
 
+static int classify(float v) {
+    if (v < -0.5f) {
+        return 0;
+    }
+    if (v < 0.0f) {
+        return 1;
+    }
+    if (v < 0.5f) {
+        return 2;
+    }
+    return 3;
+}
+
 static void calibrate_magnetometer_update(float *a, float *m)
 {
     /* Record current sample at point cloud using the rough estimate to
@@ -233,18 +246,6 @@ static void calibrate_magnetometer_update(float *a, float *m)
     float y = a[1] / len;
     float z = a[2]; /* NB: length ignored */
 
-    int classify(float v) {
-        if (v < -0.5f) {
-            return 0;
-        }
-        if (v < 0.0f) {
-            return 1;
-        }
-        if (v < 0.5f) {
-            return 2;
-        }
-        return 3;
-    }
     /* 3rd vector is not independent because we are normalized. It can
      * point above or below the xy plane, though, so total of 2+2+1 bits. */
     int idx = classify(x) << 3 | classify(y) << 1 | classify(z) >> 1;
@@ -444,6 +445,10 @@ static void estimate_earth(float *a, float *m, float *g)
     }
 }
 
+static int rad2deg(float v) {
+    return v * (180.0f / (float) M_PI);
+}
+
 static void build_result_vector(float *a, short temperature, float *m, short *out)
 {
     static float g[3];
@@ -463,10 +468,6 @@ static void build_result_vector(float *a, short temperature, float *m, short *ou
     /* Now project magnetic field on components o1 and o2. */
     float o1l = dot(m, o1) * length(o2);
     float o2l = dot(m, o2) * length(o1);
-
-    int rad2deg(float v) {
-        return v * (180.0f / (float) M_PI);
-    }
 
     /* Establish the angle in E */
     out[0] = roundf(180.0f - rad2deg(atan2f(o2l, o1l)));
@@ -530,10 +531,9 @@ void sleep_until_next_update()
         return;
     }
 
-    struct timespec interval = {
-        .tv_sec = sleep_time / 1000,
-        .tv_nsec = 1000000 * (sleep_time % 1000),
-    };
+    struct timespec interval;
+    interval.tv_sec = sleep_time / 1000;
+    interval.tv_nsec = 1000000 * (sleep_time % 1000);
     SUCCEED(nanosleep(&interval, NULL) == 0);
 }
 
@@ -557,10 +557,9 @@ static void readLoop()
     SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &akm_data) == 0);
     
     /* Sleep for 300 us, which is the measurement interval. */ 
-    struct timespec interval = {
-        .tv_sec = 0,
-        .tv_nsec = 300000,
-    };
+    struct timespec interval;
+    interval.tv_sec = 0;
+    interval.tv_nsec = 300000;
     SUCCEED(nanosleep(&interval, NULL) == 0);
 
     /* BMA150 is constantly measuring and filtering, so it never sleeps.
