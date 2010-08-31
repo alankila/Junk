@@ -234,8 +234,8 @@ static bool calibrate_ellipsoid_fit(point_t* pc, float* fc, int validity)
         }
     }
 
-    /* Less than 1/3rd of bins filled with recent data? */
-    if (n < PCR/3) {
+    /* Less than half of bins filled with recent data? */
+    if (n < PCR/2) {
         return false;
     }
 
