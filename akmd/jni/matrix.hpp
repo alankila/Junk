@@ -1,15 +1,26 @@
+#pragma once
+
+namespace akmd {
+
 class Matrix {
     private:
-    int rows, cols;
+    int rows;
+    int cols;
+    float **values;
 
-    float **data;
+    void swapRows(int i1, int i2);
 
     public:
-    float* getColumn(int idx);
-
-    Matrix& augment(Matrix& a, Matrix& b);
-
+    Matrix(int r, int c);
+    ~Matrix();
+    Matrix* multiply(Matrix* o);
+    Matrix* transpose();
+    Matrix* augment(Matrix *o);
     bool calculateReducedRowEchelonForm();
-
-    Matrix& transpose();
+    float* getColumn(int col);
+    void set(int r, int c, float value);
+    static float* solve(Matrix* a, Matrix* b);
+    static float* leastSquares(Matrix* a, Matrix* b);
 };
+
+}

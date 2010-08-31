@@ -3,7 +3,7 @@
  * by AKM. This program is the user-space counterpart of akm8973 and bma150
  * sensors found on various Android phones.
  *
- * Copyright Antti S. Lankila, 2010, licensed under the Apache License.
+ * Copyright Antti S. Lankila, 2010, licensed under GPL.
  *
  * The device node to read data from is called akm8973_daemon. The control
  * device node is akm8973_aot. The libsensors from android talks to
@@ -26,8 +26,10 @@
 
 #include <android/log.h>
 
-#include <linux-2.6.29/akm8973.h>
-#include <linux-2.6.29/bma150.h>
+#include "linux-2.6.29/akm8973.h"
+#include "linux-2.6.29/bma150.h"
+
+#include "matrix.hpp"
 
 #define AKM_NAME "/dev/akm8973_daemon"
 #define BMA150_NAME "/dev/bma150"
@@ -41,8 +43,8 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
 
 /* Point Cloud Resolution */
-#define PCR 32           /* record this number of vectors around the device */
-#define PCR_USE_TIME 100 /* time the vector is good for (seconds) */
+#define PCR 128          /* record this number of vectors around the device */
+#define PCR_USE_TIME 120 /* time the vector is good for (seconds) */
 
 typedef struct {
     float x, y, z;
@@ -65,7 +67,7 @@ static char temperature_zero = 0;
 /* The analog offset */
 static signed char analog_offset[3];
 /* The user requested analog gain */
-static int analog_gain[3];
+static int analog_gain;
 /* The actual gain used on hardware */
 static int fixed_analog_gain = 15;
 /* Digital gain to compensate for analog setting. */
@@ -126,7 +128,7 @@ static void recalculate_digital_gain()
     int i;
     for (i = 0; i < 3; i ++) {
         /* 0.4 dB per step */
-        digital_gain[i] = powf(10.0f, (analog_gain[i] - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
+        digital_gain[i] = powf(10.0f, (analog_gain - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
     }
 }
 
@@ -223,17 +225,15 @@ static void calibrate_magnetometer_analog(float *m)
     }
 }
 
-static int classify(float v) {
-    if (v < -0.5f) {
-        return 0;
+static int classify(float v)
+{
+    int i = 0;
+    float ref = -0.75f;
+    while (v > ref && i < 7) {
+        ref += 0.25f;
+        i ++;
     }
-    if (v < 0.0f) {
-        return 1;
-    }
-    if (v < 0.5f) {
-        return 2;
-    }
-    return 3;
+    return i;
 }
 
 static void calibrate_magnetometer_update(float *a, float *m)
@@ -248,7 +248,7 @@ static void calibrate_magnetometer_update(float *a, float *m)
 
     /* 3rd vector is not independent because we are normalized. It can
      * point above or below the xy plane, though, so total of 2+2+1 bits. */
-    int idx = classify(x) << 3 | classify(y) << 1 | classify(z) >> 1;
+    int idx = classify(x) << 4 | classify(y) << 1 | classify(z) >> 2;
 
     point_cloud[idx].x = m[0];
     point_cloud[idx].y = m[1];
@@ -256,75 +256,68 @@ static void calibrate_magnetometer_update(float *a, float *m)
     point_cloud[idx].time = next_update.tv_sec;
 }
 
-static float calibrate_magnetometer_eval(float x, float y, float z, float r)
+static float calibrate_magnetometer_fit(float *fc)
 {
-    int i;
-
-    float error = 0;
     int n = 0;
-    for (i = 0; i < PCR; i ++) {
+    for (int i = 0; i < PCR; i ++) {
+        if (point_cloud[i].time >= next_update.tv_sec - PCR_USE_TIME) {
+            n ++;
+        }
+    }
+
+    /* Less than 1/3rd of bins filled with recent data? No calibration yet. */
+    if (n < PCR/3) {
+        return -1.0f;
+    }
+
+    akmd::Matrix* a = new akmd::Matrix(n, 6);
+    akmd::Matrix* b = new akmd::Matrix(n, 1);
+
+    n = 0;
+    for (int i = 0; i < PCR; i ++) {
         if (point_cloud[i].time < next_update.tv_sec - PCR_USE_TIME) {
             continue;
         }
 
-        float dx = point_cloud[i].x - x;
-        float dy = point_cloud[i].y - y;
-        float dz = point_cloud[i].z - z;
+        /* Has been used for calibration, remove... */
+        point_cloud[i].time = 0;
 
-        float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
-        error += d * d;
-        n += 1;
+        float x = point_cloud[i].x;
+        float y = point_cloud[i].y;
+        float z = point_cloud[i].z;
+
+        b->set(n, 0, -x*x);
+        a->set(n, 0, -2.0f*x);
+        a->set(n, 1, y*y);
+        a->set(n, 2, -2.0f*y);
+        a->set(n, 3, z*z);
+        a->set(n, 4, -2.0f*z);
+        a->set(n, 5, 1.0f);
+
+        n ++;
     }
 
-    /* Less than 1/4th of bins filled with recent data? */
-    if (n < PCR/4) {
-        return -1.0f;
-    }
+    float *x = akmd::Matrix::leastSquares(a, b);
+    LOGI("Raw data: %f %f %f %f %f %f", x[0], x[1], x[2], x[3], x[4], x[5]);
 
-    return sqrtf(error / n);
-}
+    fc[0] = x[0];
+    fc[1] = x[2] / x[1];
+    fc[2] = x[4] / x[3];
 
-static float calibrate_magnetometer_fit(float *fc)
-{
-    /* Region to use for derivate estimation, 16 = 1 uT.
-     * Because the sensor is a bit noisy, it's probably good idea to
-     * be a bit fuzzy about the derivate estimation. */
-    const float d = 16;
-    /* Stepping speed. This should be as large as possible that still
-     * seems to converge rapidly. */
-    const float step = 16;
+    fc[3] = 1;
+    fc[4] = sqrtf(x[1]);
+    fc[5] = sqrtf(x[3]);
 
-    /* This is a bit lame; should estimate derivate with an offset
-     * properly calculated for each axis... */
-    float x = fc[0] - d/2;
-    float y = fc[1] - d/2;
-    float z = fc[2] - d/2;
-    float r = fc[3] - d/2;
+    LOGI("Updated calibration to: %f %f %f %f %f %f", fc[0], fc[1], fc[2], fc[3], fc[4], fc[5]);
 
-    float error = calibrate_magnetometer_eval(x, y, z, r);
-    if (error < 0) {
-        return error;
-    }
-
-    float dx = calibrate_magnetometer_eval(x+d, y, z, r) - error;
-    float dy = calibrate_magnetometer_eval(x, y+d, z, r) - error;
-    float dz = calibrate_magnetometer_eval(x, y, z+d, r) - error;
-    float dr = calibrate_magnetometer_eval(x, y, z, r+d) - error;
-
-    /* Steepest descent */
-    fc[0] -= dx * (step / d);
-    fc[1] -= dy * (step / d);
-    fc[2] -= dz * (step / d);
-    fc[3] -= dr * (step / d);
-
-    return error;
+    delete[] x;
 }
 
 static int calibrate_magnetometer(float *a, float *m)
 {
     int i;
 
-    static float fine_calibration[4];
+    static float fine_calibration[6] = { 0, 0, 0, 1, 1, 1 };
     static float error = 99999.0f;
 
     calibrate_magnetometer_analog(m);
@@ -345,6 +338,7 @@ static int calibrate_magnetometer(float *a, float *m)
      * TBD: add axis gain correction. */
     for (i = 0; i < 3; i ++) {
         m[i] -= fine_calibration[i];
+        m[i] *= fine_calibration[i+3];
     }
 
     /* 2 uT average error */
@@ -636,12 +630,12 @@ int main(int argc, char **argv)
 {
     int i;
    
-    if (argc != 11) {
-        printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <mx> <my> <mz> <tz>\n");
+    if (argc != 9) {
+        printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <mg> <tz>\n");
         printf("\n");
         printf("ax, ay, az = accelerometer offset (m/s^2)\n");
         printf("gx, gy, gz = accelerometer gain (m/s^2)\n");
-        printf("mx, my, mz = magnetometer analog gain (0.4 dB)\n");
+        printf("mg         = magnetometer gain (0.4 dB)\n");
         printf("tz         = temperature zero offset (C)\n");
         printf("\n");
         printf("Per-axis accelerometer offset needs to be calibrated per device.\n");
@@ -654,9 +648,9 @@ int main(int argc, char **argv)
     for (i = 0; i < 3; i ++) {
         accelerometer_offset[i] = atof(argv[1+i]) / 9.80665f * 256.0f;
         accelerometer_scale[i] = atof(argv[4+i]);
-        analog_gain[i] = atoi(argv[7+i]);
     }
-    temperature_zero = atoi(argv[10]);
+    analog_gain = atoi(argv[7]);
+    temperature_zero = atoi(argv[8]);
  
     open_fds();
     calibrate_analog_apply();
