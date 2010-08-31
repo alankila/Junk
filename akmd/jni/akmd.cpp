@@ -492,7 +492,7 @@ static void open_fds()
 
 void *aot_tracking_thread(void *arg)
 {
-    while (1) {
+    while (true) {
         int status;
         char bmode;
 
@@ -519,7 +519,7 @@ int main(int argc, char **argv)
         printf("Per-axis accelerometer offset needs to be calibrated per device.\n");
         printf("Per-axis magnetic gain needs to be calibrated per device type.\n");
         printf("Temperature offset needs to be calibrated per device type.\n");
-        _exit(1);
+        return 1;
     }
 
     analog_gain = atoi(argv[1]);
@@ -531,7 +531,7 @@ int main(int argc, char **argv)
 
     pthread_t thread_id;
     SUCCEED(pthread_create(&thread_id, NULL, aot_tracking_thread, NULL) == 0);
-    while (1) {
+    while (true) {
         readLoop();
     }
 }
