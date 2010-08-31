@@ -302,10 +302,15 @@ static int calibrate_magnetometer(float* a, float* m)
     return 3;
 }
 
-static void calibrate_accelerometer(float* a, float* g)
+static void calibrate_accelerometer(float* a)
 {
     static int last_fit_time;
     static float ellipsoid_params[6] = { 0, 0, 0, 1, 1, 1 };
+    
+    static float g[3];
+    for (int i = 0; i < 3; i ++) {
+        g[i] = g[i] * 0.8f + a[i] * 0.2f;
+    }
 
     /* a and g must have about the same length and point to about same
      * direction before I trust the value accumulated to g */
@@ -315,8 +320,8 @@ static void calibrate_accelerometer(float* a, float* g)
     /* The alignment of vector lengths and directions must be better than 5 % */
     if (al != 0
         && gl != 0
-        && fabsf(al - gl) < 0.05f
-        && dot(a, g) / (al * gl) > 0.95f) {
+        && fabsf(al - gl) < 0.04f
+        && dot(a, g) / (al * gl) > 0.96f) {
 
         /* Going to trust this point. */
         calibrate_update(acceleration_point_cloud, a, g);
@@ -352,7 +357,7 @@ static void build_result_vector(float* a, short temperature, float* m, short* ou
 {
     static float g[3];
 
-    calibrate_accelerometer(a, g);
+    calibrate_accelerometer(a);
     int magnetic_quality = calibrate_magnetometer(a, m);
     estimate_earth(a, g);
 
