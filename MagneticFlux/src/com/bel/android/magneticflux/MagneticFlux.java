@@ -1,6 +1,8 @@
 package com.bel.android.magneticflux;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 import android.app.Activity;
@@ -18,19 +20,34 @@ import android.widget.TextView;
 
 class Calibrator {
 	private static final String TAG = Calibrator.class.getSimpleName();
-	private final float[][] knownPoints = new float[32][3];
+	private final float[][] knownPoints = new float[128][3];
 
+	int medianidx;
+	private final float[][] lowpass = new float[21][3];
+	
 	private int classify(float v) {
-		if (v < -0.5) {
+		if (v < -0.75f) {
 			return 0;
 		}
-		if (v < 0) {
+		if (v < -0.5f) {
 			return 1;
 		}
-		if (v < 0.5) {
+		if (v < -0.25f) {
 			return 2;
 		}
-		return 3;
+		if (v < 0f) {
+			return 3;
+		}
+		if (v < 0.25f) {
+			return 4;
+		}
+		if (v < 0.5f) {
+			return 5;
+		}
+		if (v < 0.75f) {
+			return 6;
+		}
+		return 7;
 	}
 
 	/**
@@ -41,10 +58,44 @@ class Calibrator {
 	 * @param z
 	 */
 	public void record(float x, float y, float z) {
+		/* Smooth vectors to try to improve our guesses. */
+		lowpass[medianidx][0] = x;
+		lowpass[medianidx][1] = y;
+		lowpass[medianidx][2] = z;
+
+		if (++ medianidx != lowpass.length) {
+			return;
+		}
+		
+		medianidx = 0;
+		Arrays.sort(lowpass, new Comparator<float[]>() {
+			private float length(float[] v) {
+				return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+			}
+			
+			@Override
+			public int compare(float[] v1, float[] v2) {
+				float l1 = length(v1);
+				float l2 = length(v2);
+				
+				if (l1 < l2) {
+					return -1;
+				}
+				if (l1 > l2) {
+					return 1;
+				}
+				return 0;
+			}
+		});
+		
+		x = lowpass[lowpass.length / 2][0];
+		y = lowpass[lowpass.length / 2][1];
+		z = lowpass[lowpass.length / 2][2];
+		
 		float len = (float) Math.sqrt(x * x + y * y + z * z);
 		float xn = x / len;
 		float yn = y / len;
-		int idx = classify(xn) << 3 | classify(yn) << 1 | classify(z) >> 1;
+		int idx = classify(xn) << 4 | classify(yn) << 1 | classify(z) >> 2;
 
 		knownPoints[idx] = new float[] { x, y, z };
 	}
