@@ -10,12 +10,14 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.TextView;
 
 class Calibrator {
+	private static final String TAG = Calibrator.class.getSimpleName();
 	private final float[][] knownPoints = new float[32][3];
 
 	private int classify(float v) {
@@ -30,7 +32,14 @@ class Calibrator {
 		}
 		return 3;
 	}
-	
+
+	/**
+	 * Store a bunch of vectors based on their direction.
+	 * 
+	 * @param x
+	 * @param y
+	 * @param z
+	 */
 	public void record(float x, float y, float z) {
 		float len = (float) Math.sqrt(x * x + y * y + z * z);
 		float xn = x / len;
@@ -40,13 +49,23 @@ class Calibrator {
 		knownPoints[idx] = new float[] { x, y, z };
 	}
 	
+	/**
+	 * System to be solved is basically:
+	 * 
+	 * (x - x0)^2/(1+sx)^2 + (y - y0)^2/(1+sy)^2 + (z - z0)^2/(1+sz)^2 = R^2
+	 * 
+	 * where x, y, z are measurement facts, and sx, sy, sz, R are found via helper
+	 * variables.
+	 * 
+	 * @return 6 calibration parameters (x0, y0, z0, 1, 1/(1+sy), 1/(1+sz))
+	 */
 	public float[] extract() {
 		List<float[]> aList = new ArrayList<float[]>();
 		List<float[]> bList = new ArrayList<float[]>();
 		/* Use the points with data to fill in stuff. */
 		for (float[] f : knownPoints) {
 			if (f[0] != 0 || f[1] != 0 || f[2] != 0) {
-				bList.add(new float[] { f[0] * f[0] });
+				bList.add(new float[] { -f[0] * f[0] });
 				aList.add(new float[] {
 						-2 * f[0],
 						f[1] * f[1],
@@ -58,14 +77,17 @@ class Calibrator {
 			}
 		}
 		
-		Matrix a = new Matrix(aList.toArray(new float[aList.size()][3]));
-		Matrix b = new Matrix(bList.toArray(new float[bList.size()][1]));
-		Matrix x = MatrixUtil.leastSquares(a, b);
+		Log.i(TAG, "Found " + aList.size() + " points to calibrate with");
+		
+		Matrix a = new Matrix(aList.toArray(new float[0][0]));
+		Matrix b = new Matrix(bList.toArray(new float[0][0]));
+		Matrix x = MatrixUtil.leastSquares(a, b);		
+		Log.i(TAG, "Raw results: " + x);		
 		float[] xv = x.getColumn(0);
 		
 		/* The result vector is composed of terms:
 		 * 
-		 * x0, k2, k2 * y0, k3, k3 * z0, k4,
+		 * x0, k2, k2 * y0, k3, k3 * z0, k4
 		 * 
 		 * and k2 = (1+sx)^2 / (1+sy)^2, k3 = (1+sx)^2 / (1+sz)^2.
 		 */
@@ -74,8 +96,8 @@ class Calibrator {
 				xv[2] / xv[1],
 				xv[4] / xv[3],
 				1,
-				1 / (float) Math.sqrt(xv[1]),
-				1 / (float) Math.sqrt(xv[3]),
+				(float) Math.sqrt(xv[1]),
+				(float) Math.sqrt(xv[3]),
 		};
 	}
 }
@@ -151,16 +173,6 @@ class SensorGraph implements SensorEventListener {
 		calibrator = new Calibrator();
 	}
 	
-	/**
-	 * System to be solved is basically:
-	 * 
-	 * (x - x0)^2/(1+sx)^2 + (y - y0)^2/(1+sy)^2 + (z - z0)^2/(1+sz)^2 = R^2
-	 * 
-	 * where x, y, z are measurement facts, and sx, sy, sz, R are found via helper
-	 * variables.
-	 * 
-	 * @return 6 calibration parameters (x0, y0, z0, 1, 1+sy, 1+sz)
-	 */
 	public float[] endCalibration() {
 		float[] data = calibrator.extract();
 		calibrator = null;
@@ -178,7 +190,7 @@ class SensorGraph implements SensorEventListener {
 };
 
 public class MagneticFlux extends Activity {
-	//private static final String TAG = MagneticFlux.class.getSimpleName();
+	private static final String TAG = MagneticFlux.class.getSimpleName();
 	SensorManager sm;
 
 	SensorGraph a, m;
@@ -220,6 +232,23 @@ public class MagneticFlux extends Activity {
 			public void onClick(View v) {
 				a.reset();
 				m.reset();
+			}
+        });
+
+        Button calibrate = (Button) findViewById(R.id.Calibrate);
+        calibrate.setOnClickListener(new OnClickListener() {
+        	boolean calibrating = false;
+        	
+			@Override
+			public void onClick(View v) {
+				if (! calibrating) {
+					Log.i(TAG, "Starting calibration");
+					a.startCalibration();
+					calibrating = true;
+				} else {
+					Log.i(TAG, new Matrix(a.endCalibration()).toString());;
+					calibrating = false;
+				}
 			}
         });
         

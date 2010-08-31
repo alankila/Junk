@@ -48,6 +48,8 @@ public class MagneticSurface extends SurfaceView {
 		red = new Paint();
 		red.setColor(0x44ff0000);
 		red.setStyle(Style.STROKE);
+		
+		reset();
 	}
 
 	public void reset() {

@@ -58,6 +58,8 @@ static int akm_fd, bma150_fd;
 
 /* Accelerometer centering error. */
 static float accelerometer_offset[3];
+/* Accelerometer axis gain. */
+static float accelerometer_scale[3];
 /* Temperature is -(value-zero). */
 static char temperature_zero = 0;
 /* The analog offset */
@@ -366,6 +368,7 @@ static void calibrate_accelerometer(float *a)
     int i;
     for (i = 0; i < 3; i ++) {
         a[i] += accelerometer_offset[i];
+        a[i] *= accelerometer_scale[i];
     }
 }
 
@@ -634,11 +637,12 @@ int main(int argc, char **argv)
 {
     int i;
    
-    if (argc != 8) {
-        printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <tz>\n");
+    if (argc != 11) {
+        printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <mx> <my> <mz> <tz>\n");
         printf("\n");
-        printf("ax, ay, az = accelerometer offset (g)\n");
-        printf("gx, gy, gz = magnetometer gain (0.4 dB)\n");
+        printf("ax, ay, az = accelerometer offset (m/s^2)\n");
+        printf("gx, gy, gz = accelerometer gain (m/s^2)\n");
+        printf("mx, my, mz = magnetometer analog gain (0.4 dB)\n");
         printf("tz         = temperature zero offset (C)\n");
         printf("\n");
         printf("Per-axis accelerometer offset needs to be calibrated per device.\n");
@@ -649,10 +653,11 @@ int main(int argc, char **argv)
 
     /* args 1 .. 3, 4 .. 6 */
     for (i = 0; i < 3; i ++) {
-        accelerometer_offset[i] = atof(argv[1+i]) * 256.0f;
-        analog_gain[i] = atoi(argv[4+i]);
+        accelerometer_offset[i] = atof(argv[1+i]) / 9.80665f * 256.0f;
+        accelerometer_scale[i] = atof(argv[4+i]);
+        analog_gain[i] = atoi(argv[7+i]);
     }
-    temperature_zero = atoi(argv[7]);
+    temperature_zero = atoi(argv[10]);
  
     open_fds();
     calibrate_analog_apply();
