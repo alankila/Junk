@@ -23,14 +23,15 @@ goes along the left edge of the phone and the thumb is placed along the
 bottom edge of the phone. The middle finger points away from the device. The
 thumb is the x coordinate, index finger the y coordinate and middle finger
 the z coordinate. The coordinate axis increase towards the tips of your
-fingers.
+fingers:
 
-  y^-----.
+   ^
+  y|-----.
    |     |
    |     |
    |     |
    | ooo |
-   *----->
+   *------>
   /      x
  z
 
@@ -79,6 +80,12 @@ length of the digital filter appears to increase visible errors considerably,
 however using higher sampling rates and better filters on akmd side would
 probably improve the sensor's results nevertheless.
 
+The accelerometer reports some small offsets in the measured values. Because of
+this, heavily low-pass filtered data points are sampled when the device is held
+stationary at various orientations opportunistically, and when enough such
+points have been collected, a least-squares ellipsoid fit is used to calibrate
+the measurements.
+
 Magnetic sensor
 ---------------
 
@@ -104,22 +111,10 @@ into single 8-bit value. However, if it seems that almost all of the 8-bit
 value range is in use, the analog gain is reduced until the minimum and maximum
 bounds seen on an axis are no longer close to clipping.
 
-The analog offset can not fully compensate the external field felt by the
-sensor. A digital post-processing step is required to discover the null value
-of the magnetic field based on a sphere fit to the point cloud formed by the
-magnetic vectors measured around the device. The fitting algorithm uses the
-gravity vector's direction to estimate the device's orientation and records
-the magnetic vectors felt by the device at that orientation.
-
-Because an ellipsoid fitter is not used, the analog gain needs to be manually
-checked across the three axes to see that the sensor reports about the same
-value of the magnetic field in all directions. I am hoping that the gain needs
-to be checked just once per device type, and that all devices of that type will
-work the same.
-
-There is a bug in HTC kernel where setting the magnetic sensor to measuring
-mode imparts a 1 millisecond CPU busyloop via mdelay(1) in AKECS_SetMode. The
-new kernel function usleep() should be used there.
+The magnetometer has small offsets in the measured values after analog
+calibration. Because of this, magnetic vectors are collected when device is
+held in varying orientations, and when enough such points have been collected,
+a least-squares ellipsoid fit is used to calibrate the measurements.
 
 Yaw, Pitch, Roll
 ----------------
@@ -135,6 +130,4 @@ needle's orientation does not change much when the device is rotated, if
 calibration is good.
 
 Pitch and roll are estimated from accelerometer by performing
-spherical-to-cartesian transformation. Currently magnetometer reading is not
-yet considered, therefore making distinguishing between acceleration and
-gravity impossible. This is subject of future work.
+spherical-to-cartesian transformation.
