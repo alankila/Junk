@@ -43,7 +43,7 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
 
 /* Point Cloud Resolution */
-#define PCR 128          /* record this number of vectors around the device */
+#define PCR 32           /* record this number of vectors around the device */
 #define PCR_USE_TIME 120 /* time the vector is good for (seconds) */
 
 typedef struct {
@@ -51,17 +51,14 @@ typedef struct {
     int time;
 } point_t;
 
-static point_t point_cloud[PCR];
+static point_t acceleration_point_cloud[PCR];
+static point_t magnetometer_point_cloud[PCR];
 
 static struct timeval current_time;
 static struct timeval next_update;
 
 static int akm_fd, bma150_fd;
 
-/* Accelerometer centering error. */
-static float accelerometer_offset[3];
-/* Accelerometer axis gain. */
-static float accelerometer_scale[3];
 /* Temperature is -(value-zero). */
 static char temperature_zero = 0;
 /* The analog offset */
@@ -76,61 +73,26 @@ static float digital_gain[3];
 /****************************************************************************/
 /* Vector utilities                                                         */
 /****************************************************************************/
-static void cross_product(float *a, float *b, float *c)
+static void cross_product(float* a, float* b, float* c)
 {
     c[0] = a[1] * b[2] - a[2] * b[1];
     c[1] = a[2] * b[0] - a[0] * b[2];
     c[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-static float dot(float *a, float *b)
+static float dot(float* a, float* b)
 {
     return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 }
 
-static float length(float *a)
+static float length(float* a)
 {
-    return sqrtf(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
-}
-
-/****************************************************************************/
-/* Quaternion utilities                                                     */
-/****************************************************************************/
-typedef struct {
-    float w, x, y, z;
-} quaternion_t;
-
-static void quat(float a, float *v, quaternion_t *q)
-{
-    a *= 0.5f;
-    float sina = sinf(a);
-    float cosa = cosf(a);
-
-    q->w = cosa;
-    q->x = v[0] * sina;
-    q->y = v[1] * sina;
-    q->z = v[2] * sina;
-}
-
-static void quat_mul(quaternion_t *a, quaternion_t *b, quaternion_t *c)
-{
-    c->w = a->w*b->w - a->x*b->x - a->y*b->y - a->z*b->z;
-    c->x = a->w*b->x + a->x*b->w + a->y*b->z - a->z*b->y;
-    c->y = a->w*b->y - a->x*b->z + a->y*b->w + a->z*b->x;
-    c->z = a->w*b->z + a->x*b->y - a->y*b->x + a->z*b->w;
+    return sqrtf(dot(a, a));
 }
 
 /****************************************************************************/
 /* Analog calibration                                                       */
 /****************************************************************************/
-static void recalculate_digital_gain()
-{
-    for (int i = 0; i < 3; i ++) {
-        /* 0.4 dB per step */
-        digital_gain[i] = powf(10.0f, (analog_gain - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
-    }
-}
-
 static char akm_analog_offset(int i)
 {
     /* AKM specification says that values 0 .. 127 are monotonously
@@ -155,12 +117,17 @@ static void calibrate_analog_apply()
         char rwbuf[5] = { 2, 0xe1+i, params[i] };
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) == 0);
     }
+    
+    for (int i = 0; i < 3; i ++) {
+        /* 0.4 dB per step */
+        digital_gain[i] = powf(10.0f, (analog_gain - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
+    }
 }
 
 /****************************************************************************/
 /* Digital calibration                                                      */
 /****************************************************************************/
-static void calibrate_magnetometer_analog(float *m)
+static void calibrate_magnetometer_analog(float* m)
 {
     const float ANALOG_MAX = 126.0f;
     /* The rate of forgetting encountering the minimum or maximum bound.
@@ -182,7 +149,7 @@ static void calibrate_magnetometer_analog(float *m)
 
             /* Destroy all calibration state, we'll have to start over. */
             for (int j = 0; j < PCR; j ++) {
-                point_cloud[j].time = 0;
+                magnetometer_point_cloud[j].time = 0;
             }
 
             calibrate_analog_apply();
@@ -205,7 +172,6 @@ static void calibrate_magnetometer_analog(float *m)
             }
             
             calibrate_analog_apply();
-            recalculate_digital_gain();
             break;
         }
 
@@ -230,63 +196,57 @@ static void calibrate_magnetometer_analog(float *m)
 static int classify(float v)
 {
     int i = 0;
-    float ref = -0.75f;
-    while (v > ref && i < 7) {
-        ref += 0.25f;
+    float ref = -0.5f;
+    while (v > ref && i < 3) {
+        ref += 0.5f;
         i ++;
     }
     return i;
 }
 
-static void calibrate_magnetometer_update(float *a, float *m)
+static void calibrate_update(point_t* pc, float* a, float* v)
 {
-    /* Record current sample at point cloud using the rough estimate to
-     * determine which bin to put the precise measurement in. */
-    /* keep top 2 bits of normalized rm, and turn it into index */
     float len = length(a);
-    float x = a[0] / len;
-    float y = a[1] / len;
-    float z = a[2]; /* NB: length ignored */
+    if (a == 0) {
+        return;
+    }
 
     /* 3rd vector is not independent because we are normalized. It can
      * point above or below the xy plane, though, so total of 2+2+1 bits. */
-    int idx = classify(x) << 4 | classify(y) << 1 | classify(z) >> 2;
+    int idx = classify(a[0]/len) << 3 | classify(a[1]/len) << 1 | (a[2] > 0 ? 1 : 0);
 
-    point_cloud[idx].x = m[0];
-    point_cloud[idx].y = m[1];
-    point_cloud[idx].z = m[2];
-    point_cloud[idx].time = next_update.tv_sec;
+    pc[idx].time = next_update.tv_sec;
+    pc[idx].x = v[0];
+    pc[idx].y = v[1];
+    pc[idx].z = v[2];
 }
 
-static void calibrate_magnetometer_ellipsoid_fit(float *fc)
+static bool calibrate_ellipsoid_fit(point_t* pc, float* fc)
 {
-    static int last_fit_time;
-
     int n = 0;
     for (int i = 0; i < PCR; i ++) {
-        if (point_cloud[i].time >= next_update.tv_sec - PCR_USE_TIME) {
+        if (pc[i].time >= next_update.tv_sec - PCR_USE_TIME) {
             n ++;
         }
     }
 
     /* Less than 1/3rd of bins filled with recent data? */
-    if (n < PCR/3 || last_fit_time == next_update.tv_sec) {
-        return;
+    if (n < PCR/3) {
+        return false;
     }
-    last_fit_time = next_update.tv_sec;
 
     akmd::Matrix* a = new akmd::Matrix(n, 6);
     akmd::Matrix* b = new akmd::Matrix(n, 1);
 
     n = 0;
     for (int i = 0; i < PCR; i ++) {
-        if (point_cloud[i].time < next_update.tv_sec - PCR_USE_TIME) {
+        if (pc[i].time < next_update.tv_sec - PCR_USE_TIME) {
             continue;
         }
 
-        float x = point_cloud[i].x;
-        float y = point_cloud[i].y;
-        float z = point_cloud[i].z;
+        float x = pc[i].x;
+        float y = pc[i].y;
+        float z = pc[i].z;
 
         b->set(n, 0, -x*x);
         a->set(n, 0, -2.0f*x);
@@ -312,15 +272,22 @@ static void calibrate_magnetometer_ellipsoid_fit(float *fc)
     fc[5] = sqrtf(x[3]);
 
     delete[] x;
+
+    return true;
 }
 
-static int calibrate_magnetometer(float *a, float *m)
+static int calibrate_magnetometer(float* a, float* m)
 {
+    static int last_fit_time;
     static float ellipsoid_params[6] = { 0, 0, 0, 1, 1, 1 };
 
     calibrate_magnetometer_analog(m);
-    calibrate_magnetometer_update(a, m);
-    calibrate_magnetometer_ellipsoid_fit(ellipsoid_params);
+    calibrate_update(magnetometer_point_cloud, a, m);
+    if (last_fit_time != next_update.tv_sec) {
+        if (calibrate_ellipsoid_fit(magnetometer_point_cloud, ellipsoid_params)) {
+            last_fit_time = next_update.tv_sec;
+        }
+    }
 
     /* Correct for scale and offset. */
     for (int i = 0; i < 3; i ++) {
@@ -331,82 +298,45 @@ static int calibrate_magnetometer(float *a, float *m)
     return 3;
 }
 
-static void calibrate_accelerometer(float *a)
+static void calibrate_accelerometer(float* a, float* g)
 {
+    static int last_fit_time;
+    static float ellipsoid_params[6] = { 0, 0, 0, 1, 1, 1 };
+
+    /* a and g must have about the same length and point to about same
+     * direction before I trust the value accumulated to g */
+    float al = length(a);
+    float gl = length(g);
+
+    /* The alignment of vector lengths and directions must be better than 5 % */
+    if (al != 0
+        && gl != 0
+        && fabsf(al - gl) < 0.05f
+        && dot(a, g) / (al * gl) > 0.95f) {
+
+        /* Going to trust this point. */
+        calibrate_update(acceleration_point_cloud, a, g);
+        if (last_fit_time < next_update.tv_sec - 15) {
+            if (calibrate_ellipsoid_fit(acceleration_point_cloud, ellipsoid_params)) {
+                last_fit_time = next_update.tv_sec;
+            }
+        }
+    }
+
     for (int i = 0; i < 3; i ++) {
-        a[i] += accelerometer_offset[i];
-        a[i] *= accelerometer_scale[i];
+        a[i] -= ellipsoid_params[i];
+        a[i] *= ellipsoid_params[i+3];
     }
 }
 
 /****************************************************************************/
 /* Sensor output calculation                                                */
 /****************************************************************************/
-static void estimate_earth(float *a, float *m, float *g)
+static void estimate_earth(float* a, float* g)
 {
-#if 0
-    static float mh[3];
-    float a_l = length(a);
-    
-    /* This quaternion represents the shortest possible rotation
-     * between mh and g. */
-    quaternion_t q;
-    {  
-        float a_cross_mh[3];
-        cross_product(mh, a, a_cross_mh);
-        float a_cross_mh_l = length(a_cross_mh);
-
-        float mh_l = length(mh);
-        if (a_l == 0 || mh_l == 0 || a_cross_mh_l == 0) {
-            q.w = 0;
-            q.x = 1;
-            q.y = 0;
-            q.z = 0;
-        } else {
-            float a_dot_mh = dot(a, mh) / (a_l * mh_l);
-
-            a_cross_mh[0] /= a_cross_mh_l;
-            a_cross_mh[1] /= a_cross_mh_l;
-            a_cross_mh[2] /= a_cross_mh_l;
-
-            quat(acosf(a_dot_mh), a_cross_mh, &q);
-        }
-    }
-
-    /* Now rotate m relative to mh:
-     * m' = q * m * q^-1 */
-    quaternion_t qm;
-    qm.w = 0;
-    qm.x = m[0];
-    qm.y = m[1];
-    qm.z = m[2];
-
-    quaternion_t tmp;
-    quat_mul(&q, &qm, &tmp);
-    q.x = -q.x;
-    q.y = -q.y;
-    q.z = -q.z;
-    quat_mul(&tmp, &q, &qm);
-
-    /* Turn the quaternion back to vector, compare with previous, adjust g */
-    float mr[3];
-    mr[0] = qm.x;
-    mr[1] = qm.y;
-    mr[2] = qm.z;
-
-    float mr_l = length(mr);
-#endif
     for (int i = 0; i < 3; i ++) {
         /* Slowly correct gravity towards general acceleration direction */
         g[i] = g[i] * 0.9f + a[i] * 0.1f;
-        /* Rapidly adjust based on change in magnetic vector */
-#if 0
-        if (mr_l != 0) {
-            g[i] -= mr[i] / mr_l * a_l - a[i];
-        }
- 
-        mh[i] = m[i];
-#endif
     }
 }
 
@@ -414,13 +344,13 @@ static int rad2deg(float v) {
     return v * (180.0f / (float) M_PI);
 }
 
-static void build_result_vector(float *a, short temperature, float *m, short *out)
+static void build_result_vector(float* a, short temperature, float* m, short* out)
 {
     static float g[3];
 
-    calibrate_accelerometer(a);
+    calibrate_accelerometer(a, g);
     int magnetic_quality = calibrate_magnetometer(a, m);
-    estimate_earth(a, m, g);
+    estimate_earth(a, g);
 
     /* From g, we need to discover 2 suitable vectors. Cross product
      * is used to establish orthogonal basis in E. */
@@ -598,11 +528,9 @@ void *aot_tracking_thread(void *arg)
 
 int main(int argc, char **argv)
 {
-    if (argc != 9) {
-        printf("Usage: akmd <ax> <ay> <az> <gx> <gy> <gz> <mg> <tz>\n");
+    if (argc != 3) {
+        printf("Usage: akmd <mg> <tz>\n");
         printf("\n");
-        printf("ax, ay, az = accelerometer offset (m/s^2)\n");
-        printf("gx, gy, gz = accelerometer gain (m/s^2)\n");
         printf("mg         = magnetometer gain (0.4 dB)\n");
         printf("tz         = temperature zero offset (C)\n");
         printf("\n");
@@ -612,17 +540,11 @@ int main(int argc, char **argv)
         _exit(1);
     }
 
-    /* args 1 .. 3, 4 .. 6 */
-    for (int i = 0; i < 3; i ++) {
-        accelerometer_offset[i] = atof(argv[1+i]) / 9.80665f * 256.0f;
-        accelerometer_scale[i] = atof(argv[4+i]);
-    }
-    analog_gain = atoi(argv[7]);
-    temperature_zero = atoi(argv[8]);
+    analog_gain = atoi(argv[1]);
+    temperature_zero = atoi(argv[2]);
  
     open_fds();
     calibrate_analog_apply();
-    recalculate_digital_gain();
     SUCCEED(gettimeofday(&next_update, NULL) == 0);
 
     pthread_t thread_id;
