@@ -162,7 +162,7 @@ static void calibrate_magnetometer_analog(Vector* m)
     *m = m->multiply(digital_gain);
 }
 
-static int calibrate_magnetometer(Vector a, Vector* m)
+static void calibrate_magnetometer(Vector a, Vector* m)
 {
     static int last_fit_time;
     static Vector ellipsoid_params[2] = {
@@ -182,8 +182,6 @@ static int calibrate_magnetometer(Vector a, Vector* m)
     /* Correct for scale and offset. */
     *m = m->add(ellipsoid_params[0].multiply(-1));
     *m = m->multiply(ellipsoid_params[1]);
-
-    return 3;
 }
 
 static void calibrate_accelerometer(Vector* a)
@@ -241,7 +239,7 @@ static void build_result_vector(Vector a, short temperature, Vector m, short* ou
     static Vector g;
 
     calibrate_accelerometer(&a);
-    int magnetic_quality = calibrate_magnetometer(a, &m);
+    calibrate_magnetometer(a, &m);
     estimate_earth(a, &g);
 
     /* From g, we need to discover 2 suitable vectors. Cross product
@@ -261,8 +259,8 @@ static void build_result_vector(Vector a, short temperature, Vector m, short* ou
     /* roll */
     out[2] = roundf(90.0f - rad2deg(acosf(g.x / g.length())));
     
-    out[3] = temperature;
-    out[4] = magnetic_quality; /* Magnetic accuracy; result of sphere fit, but not evaluated right now */
+    out[3] = -(temperature + temperature_zero);
+    out[4] = 3; /* Magnetic accuracy; could be defined as test of quality of sphere fit, but not evaluated right now */
     out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
@@ -278,7 +276,7 @@ static void build_result_vector(Vector a, short temperature, Vector m, short* ou
 /****************************************************************************/
 /* Raw mechanics of sensor reading                                          */
 /****************************************************************************/
-void sleep_until_next_update()
+static void sleep_until_next_update()
 {
     unsigned short delay;
     SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) == 0);
@@ -355,7 +353,7 @@ static void* read_loop(void *lock)
         /* Significance and range of values can be extracted from
          * online AK 8973 manual. The kernel driver just passes the data on. */
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
-        short temperature = (signed char) -(akm_data[1] + temperature_zero);
+        short temperature = (signed char) akm_data[1];
         mbuf[index].x = 127 - (unsigned char) akm_data[2];
         mbuf[index].y = 127 - (unsigned char) akm_data[3];
         mbuf[index].z = 127 - (unsigned char) akm_data[4];
