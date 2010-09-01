@@ -37,7 +37,7 @@
 #define BMA150_NAME "/dev/bma150"
 
 #define SUCCEED(...) if (! (__VA_ARGS__)) {                                \
-        LOGI(__FILE__ " ioctl on line %d: %s", __LINE__, strerror(errno)); \
+        LOGI(__FILE__ ":%d " #__VA_ARGS__ " failed: %s", __LINE__, strerror(errno)); \
         exit(1);                                                           \
     }
 
