@@ -117,17 +117,14 @@ static void calibrate_magnetometer_analog_helper(float val, int i)
     if (val > ANALOG_MAX || val < -ANALOG_MAX) {
         analog_offset[i] += val > ANALOG_MAX ? -1 : 1;
         LOGI("Adjusting analog axis %d to %d because of value %f", i, analog_offset[i], val);
+        calibrate_analog_apply();
 
         /* The other axes are OK */
         rc_min[i] = 0;
         rc_max[i] = 0;
 
         /* Destroy all calibration state, we'll have to start over. */
-        for (int j = 0; j < PCR; j ++) {
-            magnetometer.reset();
-        }
-
-        calibrate_analog_apply();
+        magnetometer.reset();
         return;
     }
 
@@ -271,7 +268,7 @@ static void build_result_vector(Vector a, short temperature, Vector m, short* ou
     out[2] = roundf(90.0f - rad2deg(acosf(g.x / g.length())));
     
     out[3] = temperature;
-    out[4] = magnetic_quality; /* Magnetic accuracy; result of sphere fit. */
+    out[4] = magnetic_quality; /* Magnetic accuracy; result of sphere fit, but not evaluated right now */
     out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
 
     // Android wants 720 = 1G, Device has 256 = 1G. */
@@ -331,57 +328,57 @@ void sleep_until_next_update()
     SUCCEED(nanosleep(&interval, NULL) == 0);
 }
 
-static void readLoop()
+static void* read_loop(void *lock)
 {
     static Vector abuf[2];
     static Vector mbuf[2];
     static int index = 0;
 
-    /* This ioctl sleeps if the control channel isn't open, so we can use
-     * this to pause ourselves. Another thread shuts down the BMA150 chip.
-     * AKM 8973 will sleep when not being measured anyway. */
-    int status;
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
-   
-    /* Measuring puts readable state to 0. It is going to take
-     * some time before the values are ready. Not using SET_MODE
-     * because it contains mdelay(1) which makes measurements spin CPU! */
-    char akm_data[5] = { 2, AKECS_REG_MS1, AKECS_MODE_MEASURE };
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &akm_data) == 0);
+    /* Failure to lock this mutex means the main thread is holding it.
+     * It releases it when going to sleep. */
+    while (pthread_mutex_trylock((pthread_mutex_t*) lock) != 0) {
+        /* Measuring puts readable state to 0. It is going to take
+         * some time before the values are ready. Not using SET_MODE
+         * because it contains mdelay(1) which makes measurements spin CPU! */
+        char akm_data[5] = { 2, AKECS_REG_MS1, AKECS_MODE_MEASURE };
+        SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &akm_data) == 0);
     
-    /* Sleep for 300 us, which is the measurement interval. */ 
-    struct timespec interval;
-    interval.tv_sec = 0;
-    interval.tv_nsec = 300000;
-    SUCCEED(nanosleep(&interval, NULL) == 0);
+        /* Sleep for 300 us, which is the measurement interval. */ 
+        struct timespec interval;
+        interval.tv_sec = 0;
+        interval.tv_nsec = 300000;
+        SUCCEED(nanosleep(&interval, NULL) == 0);
 
-    /* BMA150 is constantly measuring and filtering, so it never sleeps.
-     * The ioctl in truth returns only 3 values, but buffer in kernel is
-     * defined as 8 shorts long. */
-    short bma150_data[8];
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) == 0);
-    abuf[index].x = bma150_data[0];
-    abuf[index].y = -bma150_data[1];
-    abuf[index].z = bma150_data[2];
+        /* BMA150 is constantly measuring and filtering, so it never sleeps.
+         * The ioctl in truth returns only 3 values, but buffer in kernel is
+         * defined as 8 shorts long. */
+        short bma150_data[8];
+        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) == 0);
+        abuf[index].x = bma150_data[0];
+        abuf[index].y = -bma150_data[1];
+        abuf[index].z = bma150_data[2];
 
-    /* Significance and range of values can be extracted from
-     * online AK 8973 manual. The kernel driver just passes the data on. */
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
-    short temperature = (signed char) -(akm_data[1] + temperature_zero);
-    mbuf[index].x = 127 - (unsigned char) akm_data[2];
-    mbuf[index].y = 127 - (unsigned char) akm_data[3];
-    mbuf[index].z = 127 - (unsigned char) akm_data[4];
+        /* Significance and range of values can be extracted from
+         * online AK 8973 manual. The kernel driver just passes the data on. */
+        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
+        short temperature = (signed char) -(akm_data[1] + temperature_zero);
+        mbuf[index].x = 127 - (unsigned char) akm_data[2];
+        mbuf[index].y = 127 - (unsigned char) akm_data[3];
+        mbuf[index].z = 127 - (unsigned char) akm_data[4];
 
-    Vector a = abuf[0].add(abuf[1]).multiply(0.5f);
-    Vector m = mbuf[0].add(mbuf[1]).multiply(0.5f);
-    index = (index + 1) & 1;
+        Vector a = abuf[0].add(abuf[1]).multiply(0.5f);
+        Vector m = mbuf[0].add(mbuf[1]).multiply(0.5f);
+        index = (index + 1) & 1;
 
-    /* Calculate and set data readable on compass input. */
-    short final_data[12];
-    build_result_vector(a, temperature, m, final_data);
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) == 0);
+        /* Calculate and set data readable on compass input. */
+        short final_data[12];
+        build_result_vector(a, temperature, m, final_data);
+        SUCCEED(ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) == 0);
 
-    sleep_until_next_update();
+        sleep_until_next_update();
+    }
+
+    return NULL;
 }
 
 static void open_fds()
@@ -403,24 +400,6 @@ static void open_fds()
     SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
 }
 
-void *aot_tracking_thread(void *arg)
-{
-    while (true) {
-        int status;
-        char bmode;
-
-        /* When open, we enable BMA and wait for close event. */
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
-        bmode = BMA_MODE_NORMAL;
-        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
-
-        /* When closed, we disable BMA and wait for open event. */
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) == 0);
-        bmode = BMA_MODE_SLEEP;
-        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
-    }
-}
-
 int main(int argc, char **argv)
 {
     if (argc != 3) {
@@ -440,11 +419,34 @@ int main(int argc, char **argv)
  
     open_fds();
     calibrate_analog_apply();
-    SUCCEED(gettimeofday(&next_update, NULL) == 0);
 
-    pthread_t thread_id;
-    SUCCEED(pthread_create(&thread_id, NULL, aot_tracking_thread, NULL) == 0);
     while (true) {
-        readLoop();
+        pthread_t thread_id;
+        pthread_mutex_t read_lock;
+        int status;
+        char bmode;
+
+        /* When open, we enable BMA and wait for close event. */
+        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
+        
+        bmode = BMA_MODE_NORMAL;
+        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
+        SUCCEED(gettimeofday(&next_update, NULL) == 0);
+
+        /* Start our read thread */
+        SUCCEED(pthread_mutex_init(&read_lock, NULL) == 0);
+        SUCCEED(pthread_mutex_lock(&read_lock) == 0);
+        SUCCEED(pthread_create(&thread_id, NULL, read_loop, &read_lock) == 0);
+
+        /* When closed, we disable BMA and wait for open event. */
+        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) == 0);
+        bmode = BMA_MODE_SLEEP;
+        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
+
+        /* Signal our read thread to stop. */
+        SUCCEED(pthread_mutex_unlock(&read_lock) == 0);
+        void *result;
+        SUCCEED(pthread_join(thread_id, &result) == 0);
+        SUCCEED(pthread_mutex_destroy(&read_lock) == 0);
     }
 }
