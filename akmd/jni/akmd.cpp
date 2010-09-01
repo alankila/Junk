@@ -29,6 +29,7 @@
 #include "linux-2.6.29/akm8973.h"
 #include "linux-2.6.29/bma150.h"
 
+#include "calibrator.hpp"
 #include "matrix.hpp"
 #include "vector.hpp"
 
@@ -49,13 +50,8 @@ typedef struct {
     int time;
 } point_t;
 
-/* Point Cloud Resolution */
-#define PCR 32           /* record this number of vectors around the device */
-
-#define MAGNETOMETER_VALIDITY 120 /* time the vector is good for (seconds) */
-static point_t magnetometer_point_cloud[PCR];
-#define ACCELERATION_VALIDITY 1800 /* time the vector is good for (seconds) */
-static point_t acceleration_point_cloud[PCR];
+Calibrator magnetometer(120);
+Calibrator acceleration(3600);
 
 static struct timeval current_time;
 static struct timeval next_update;
@@ -128,7 +124,7 @@ static void calibrate_magnetometer_analog_helper(float val, int i)
 
         /* Destroy all calibration state, we'll have to start over. */
         for (int j = 0; j < PCR; j ++) {
-            magnetometer_point_cloud[j].time = 0;
+            magnetometer.reset();
         }
 
         calibrate_analog_apply();
@@ -178,90 +174,6 @@ static void calibrate_magnetometer_analog(Vector* m)
     *m = m->multiply(digital_gain);
 }
 
-#if PCR != 32
-#error "PCR must be 32 for this version of classify()"
-#endif
-static int classify(float v)
-{
-    int i = 0;
-    float ref = -0.5f;
-    while (v > ref && i < 3) {
-        ref += 0.5f;
-        i ++;
-    }
-    return i;
-}
-
-static void calibrate_update(point_t* pc, Vector a, Vector v)
-{
-    float len = a.length();
-    if (len == 0) {
-        return;
-    }
-
-    /* 3rd vector is not independent because we are normalized. It can
-     * point above or below the xy plane, though, so total of 2+2+1 bits. */
-    int idx = classify(a.x/len) << 3 | classify(a.y/len) << 1 | (a.z > 0 ? 1 : 0);
-
-    pc[idx].time = next_update.tv_sec;
-    pc[idx].v.x = v.x;
-    pc[idx].v.y = v.y;
-    pc[idx].v.z = v.z;
-}
-
-static bool calibrate_ellipsoid_fit(point_t* pc, Vector* fc, int validity)
-{
-    int n = 0;
-    for (int i = 0; i < PCR; i ++) {
-        if (pc[i].time >= next_update.tv_sec - validity) {
-            n ++;
-        }
-    }
-
-    /* Less than half of bins filled with recent data? */
-    if (n < PCR/2) {
-        return false;
-    }
-
-    Matrix a = Matrix(n, 6);
-    Matrix b = Matrix(n, 1);
-
-    n = 0;
-    for (int i = 0; i < PCR; i ++) {
-        if (pc[i].time < next_update.tv_sec - validity) {
-            continue;
-        }
-
-        float x = pc[i].v.x;
-        float y = pc[i].v.y;
-        float z = pc[i].v.z;
-
-        b.set(n, 0, -x*x);
-        a.set(n, 0, -2.0f*x);
-        a.set(n, 1, y*y);
-        a.set(n, 2, -2.0f*y);
-        a.set(n, 3, z*z);
-        a.set(n, 4, -2.0f*z);
-        a.set(n, 5, 1.0f);
-
-        n ++;
-    }
-
-    float *x = Matrix::leastSquares(&a, &b);
-
-    fc[0].x = x[0];
-    fc[0].y = x[2] / x[1];
-    fc[0].z = x[4] / x[3];
-
-    fc[1].x = 1;
-    fc[1].y = sqrtf(x[1]);
-    fc[1].z = sqrtf(x[3]);
-
-    delete[] x;
-
-    return true;
-}
-
 static int calibrate_magnetometer(Vector a, Vector* m)
 {
     static int last_fit_time;
@@ -271,9 +183,10 @@ static int calibrate_magnetometer(Vector a, Vector* m)
     };
 
     calibrate_magnetometer_analog(m);
-    calibrate_update(magnetometer_point_cloud, a, *m);
-    if (last_fit_time != next_update.tv_sec) {
-        if (calibrate_ellipsoid_fit(magnetometer_point_cloud, ellipsoid_params, MAGNETOMETER_VALIDITY)) {
+
+    magnetometer.update(next_update.tv_sec, a, *m);
+    if (last_fit_time < next_update.tv_sec - 1) {
+        if (magnetometer.try_fit(next_update.tv_sec, ellipsoid_params)) {
             last_fit_time = next_update.tv_sec;
         }
     }
@@ -308,9 +221,9 @@ static void calibrate_accelerometer(Vector* a)
         && a->dot(g) / (al * gl) > 0.96f) {
 
         /* Going to trust this point. */
-        calibrate_update(acceleration_point_cloud, *a, g);
+        acceleration.update(next_update.tv_sec, *a, g);
         if (last_fit_time < next_update.tv_sec - 60) {
-            if (calibrate_ellipsoid_fit(acceleration_point_cloud, ellipsoid_params, ACCELERATION_VALIDITY)) {
+            if (acceleration.try_fit(next_update.tv_sec, ellipsoid_params)) {
                 last_fit_time = next_update.tv_sec;
             }
         }
