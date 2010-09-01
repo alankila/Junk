@@ -18,6 +18,9 @@ Calibrator::Calibrator(int validity)
 
 void Calibrator::reset()
 {
+    fit_time = 0;
+    center = Vector(0, 0, 0);
+    scale = Vector(1, 1, 1);
     memset(point_cloud, 0, sizeof(point_cloud));
 }
 
@@ -54,7 +57,7 @@ void Calibrator::update(int time, Vector a, Vector v)
     point_cloud[idx].v = v;
 }
 
-bool Calibrator::try_fit(int time, Vector* fc)
+bool Calibrator::try_fit(int time)
 {
     int n = 0;
     for (int i = 0; i < PCR; i ++) {
@@ -67,6 +70,8 @@ bool Calibrator::try_fit(int time, Vector* fc)
     if (n < PCR/2) {
         return false;
     }
+
+    fit_time = time;
 
     Matrix a = Matrix(n, 6);
     Matrix b = Matrix(n, 1);
@@ -91,11 +96,8 @@ bool Calibrator::try_fit(int time, Vector* fc)
     }
 
     float *x = Matrix::leastSquares(&a, &b);
-    /* Center */
-    fc[0] = Vector(x[0], x[2] / x[1], x[4] / x[3]);
-    /* Scaling */
-    fc[1] = Vector(1, sqrtf(x[1]), sqrtf(x[3]));
-
+    center = Vector(x[0], x[2] / x[1], x[4] / x[3]);
+    scale = Vector(1, sqrtf(x[1]), sqrtf(x[3]));
     delete[] x;
 
     return true;

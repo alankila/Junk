@@ -13,60 +13,55 @@
  * using an ioctl on the akm8973_daemon.
  */
 
-#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/time.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
-#include <android/log.h>
+#include <time.h>
 
 #include "linux-2.6.29/akm8973.h"
 #include "linux-2.6.29/bma150.h"
 
-#include "calibrator.hpp"
-#include "matrix.hpp"
-#include "vector.hpp"
+#include "akmd.hpp"
 
-#define AKM_NAME "/dev/akm8973_daemon"
-#define BMA150_NAME "/dev/bma150"
+namespace akmd {
 
-#define SUCCEED(...) if (! (__VA_ARGS__)) { \
-LOGI("%s:%d expression '%s' failed: %s", __FILE__, __LINE__, #__VA_ARGS__, strerror(errno)); \
-exit(1); \
+Akmd::Akmd(int magnetometer_gain, int temperature_zero)
+    : accelerometer(3600), magnetometer(120)
+{
+    this->analog_gain = magnetometer_gain;
+    this->temperature_zero = temperature_zero;
+
+    akm_fd = open(AKM_NAME, O_RDONLY);
+    SUCCEED(akm_fd != -1);
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_RESET, NULL) == 0);
+    calibrate_analog_apply();
+
+    bma150_fd = open(BMA150_NAME, O_RDONLY);
+    SUCCEED(bma150_fd != -1);
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_INIT, NULL) == 0);
+    
+    char rwbuf[8] = { 1, RANGE_BWIDTH_REG };
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ, &rwbuf) == 0);
+    rwbuf[2] = (rwbuf[1] & 0xf8) | 1; /* 47 Hz sampling */
+    rwbuf[0] = 2;
+    rwbuf[1] = RANGE_BWIDTH_REG;
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
+    
+    fixed_analog_gain = 15;
+    calibrate_analog_apply();
+
+    earth = Vector(0, 0, -256);
 }
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
-
-using namespace akmd;
-
-Calibrator magnetometer(120);
-Calibrator acceleration(3600);
-
-static struct timeval next_update;
-
-static int akm_fd, bma150_fd;
-
-/* Temperature is -(value-zero). */
-static char temperature_zero;
-/* The analog offset */
-static signed char analog_offset[3];
-/* The user requested analog gain */
-static int analog_gain;
-/* The actual gain used on hardware */
-static int fixed_analog_gain;
-/* Digital gain to compensate for analog setting. */
-static float digital_gain;
+Akmd::~Akmd() {
+    SUCCEED(close(akm_fd) == 0);
+    SUCCEED(close(bma150_fd) == 0);
+}
 
 /****************************************************************************/
 /* Analog calibration                                                       */
 /****************************************************************************/
-static char akm_analog_offset(int i)
+char Akmd::akm_analog_offset(int i)
 {
     signed char corr = analog_offset[i];
     if (corr < 0) {
@@ -75,7 +70,7 @@ static char akm_analog_offset(int i)
     return (char) corr;
 }
 
-static void calibrate_analog_apply()
+void Akmd::calibrate_analog_apply()
 {
     char params[6] = {
         akm_analog_offset(0), akm_analog_offset(1), akm_analog_offset(2),
@@ -93,7 +88,7 @@ static void calibrate_analog_apply()
 /****************************************************************************/
 /* Digital calibration                                                      */
 /****************************************************************************/
-static void calibrate_magnetometer_analog_helper(float val, int i)
+void Akmd::calibrate_magnetometer_analog_helper(float val, int i)
 {
     const float ANALOG_MAX = 126.0f;
     const float BOUND_MAX = 240.0f;
@@ -101,8 +96,6 @@ static void calibrate_magnetometer_analog_helper(float val, int i)
      * Keeping this fairly large to make it less likely that analog gain
      * gets adjusted by mistake. */
     const float CALIBRATE_DECAY = 0.1f;
-    static float rc_min[3];
-    static float rc_max[3];
 
     /* Autoadjust analog parameters */
     if (val > ANALOG_MAX || val < -ANALOG_MAX) {
@@ -152,7 +145,7 @@ static void calibrate_magnetometer_analog_helper(float val, int i)
     }
 }
 
-static void calibrate_magnetometer_analog(Vector* m)
+void Akmd::calibrate_magnetometer_analog(Vector* m)
 {
     calibrate_magnetometer_analog_helper(m->x, 0);
     calibrate_magnetometer_analog_helper(m->y, 1);
@@ -162,91 +155,76 @@ static void calibrate_magnetometer_analog(Vector* m)
     *m = m->multiply(digital_gain);
 }
 
-static void calibrate_magnetometer(Vector a, Vector* m)
+void Akmd::calibrate_magnetometer(Vector a, Vector* m)
 {
-    static int last_fit_time;
-    static Vector ellipsoid_params[2] = {
-        Vector(0, 0, 0),
-        Vector(1, 1, 1),
-    };
+    const int REFRESH = 1;
 
     calibrate_magnetometer_analog(m);
 
     magnetometer.update(next_update.tv_sec, a, *m);
-    if (last_fit_time < next_update.tv_sec - 1) {
-        if (magnetometer.try_fit(next_update.tv_sec, ellipsoid_params)) {
-            last_fit_time = next_update.tv_sec;
-        }
+    if (magnetometer.fit_time <= next_update.tv_sec - REFRESH) {
+        magnetometer.try_fit(next_update.tv_sec);
     }
 
     /* Correct for scale and offset. */
-    *m = m->add(ellipsoid_params[0].multiply(-1));
-    *m = m->multiply(ellipsoid_params[1]);
+    *m = m->add(magnetometer.center.multiply(-1));
+    *m = m->multiply(magnetometer.scale);
 }
 
-static void calibrate_accelerometer(Vector* a)
+void Akmd::calibrate_accelerometer(Vector* a)
 {
-    static Vector g;
-    static int last_fit_time;
-    static Vector ellipsoid_params[2] = {
-        Vector(0, 0, 0),
-        Vector(1, 1, 1),
-    };
+    const int REFRESH = 60;
 
-    g = g.multiply(0.8f).add(a->multiply(0.2f));
+    accelerometer_g = accelerometer_g.multiply(0.8f).add(a->multiply(0.2f));
 
     /* a and g must have about the same length and point to about same
      * direction before I trust the value accumulated to g */
     float al = a->length();
-    float gl = g.length();
+    float gl = accelerometer_g.length();
 
     /* The alignment of vector lengths and directions must be better than 5 % */
     if (al != 0
         && gl != 0
         && fabsf(al - gl) < 0.04f
-        && a->dot(g) / (al * gl) > 0.96f) {
+        && a->dot(accelerometer_g) / (al * gl) > 0.96f) {
 
         /* Going to trust this point. */
-        acceleration.update(next_update.tv_sec, *a, g);
-        if (last_fit_time < next_update.tv_sec - 60) {
-            if (acceleration.try_fit(next_update.tv_sec, ellipsoid_params)) {
-                last_fit_time = next_update.tv_sec;
-            }
+        accelerometer.update(next_update.tv_sec, *a, accelerometer_g);
+        if (accelerometer.fit_time <= next_update.tv_sec - REFRESH) {
+            accelerometer.try_fit(next_update.tv_sec);
         }
     }
 
-    *a = a->add(ellipsoid_params[0].multiply(-1));
-    *a = a->multiply(ellipsoid_params[1]);
+    *a = a->add(accelerometer.center.multiply(-1));
+    *a = a->multiply(accelerometer.scale);
 }
 
 /****************************************************************************/
 /* Sensor output calculation                                                */
 /****************************************************************************/
-static void estimate_earth(Vector a, Vector* g)
+void Akmd::estimate_earth(Vector a)
 {
     /* Smooth acceleration over time to try to establish a less unstable
      * direction towards Earth. Probably the best we can do until gyroscopes.
      */
-    *g = g->multiply(0.9f).add(a.multiply(0.1f));
+    earth = earth.multiply(0.9f).add(a.multiply(0.1f));
 }
 
 static float rad2deg(float v) {
     return v * (180.0f / (float) M_PI);
 }
 
-static void build_result_vector(Vector a, short temperature, Vector m, short* out)
+void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
 {
-    static Vector g;
-
     calibrate_accelerometer(&a);
     calibrate_magnetometer(a, &m);
-    estimate_earth(a, &g);
+    estimate_earth(a);
 
     /* From g, we need to discover 2 suitable vectors. Cross product
      * is used to establish orthogonal basis in E. */
     Vector ref(-1, 0, 0);
-    Vector o1 = g.cross(ref);
-    Vector o2 = g.cross(o1);
+    Vector o1 = earth.cross(ref);
+    Vector o2 = earth.cross(o1);
     
     /* Now project magnetic field on components o1 and o2. */
     float o1l = m.dot(o1) * o2.length();
@@ -255,9 +233,9 @@ static void build_result_vector(Vector a, short temperature, Vector m, short* ou
     /* Establish the angle in E */
     out[0] = roundf(180.0f - rad2deg(atan2f(o2l, o1l)));
     /* pitch */
-    out[1] = roundf(rad2deg(atan2f(g.y, -g.z)));
+    out[1] = roundf(rad2deg(atan2f(earth.y, -earth.z)));
     /* roll */
-    out[2] = roundf(90.0f - rad2deg(acosf(g.x / g.length())));
+    out[2] = roundf(90.0f - rad2deg(acosf(earth.x / earth.length())));
     
     out[3] = -(temperature + temperature_zero);
     out[4] = 3; /* Magnetic accuracy; could be defined as test of quality of sphere fit, but not evaluated right now */
@@ -276,7 +254,7 @@ static void build_result_vector(Vector a, short temperature, Vector m, short* ou
 /****************************************************************************/
 /* Raw mechanics of sensor reading                                          */
 /****************************************************************************/
-static void sleep_until_next_update()
+void Akmd::sleep_until_next_update()
 {
     unsigned short delay;
     SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) == 0);
@@ -320,122 +298,69 @@ static void sleep_until_next_update()
     SUCCEED(nanosleep(&interval, NULL) == 0);
 }
 
-static void* read_loop(void *lock)
+void Akmd::measure()
 {
-    static Vector abuf[2];
-    static Vector mbuf[2];
-    static int index = 0;
-
-    /* Failure to lock this mutex means the main thread is holding it.
-     * It releases it when going to sleep. */
-    while (pthread_mutex_trylock((pthread_mutex_t*) lock) != 0) {
-        /* Measuring puts readable state to 0. It is going to take
-         * some time before the values are ready. Not using SET_MODE
-         * because it contains mdelay(1) which makes measurements spin CPU! */
-        char akm_data[5] = { 2, AKECS_REG_MS1, AKECS_MODE_MEASURE };
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &akm_data) == 0);
+    /* Measuring puts readable state to 0. It is going to take
+     * some time before the values are ready. Not using SET_MODE
+     * because it contains mdelay(1) which makes measurements spin CPU! */
+    char akm_data[5] = { 2, AKECS_REG_MS1, AKECS_MODE_MEASURE };
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &akm_data) == 0);
     
-        /* Sleep for 300 us, which is the measurement interval. */ 
-        struct timespec interval;
-        interval.tv_sec = 0;
-        interval.tv_nsec = 300000;
-        SUCCEED(nanosleep(&interval, NULL) == 0);
+    /* Sleep for 300 us, which is the measurement interval. */ 
+    struct timespec interval;
+    interval.tv_sec = 0;
+    interval.tv_nsec = 300000;
+    SUCCEED(nanosleep(&interval, NULL) == 0);
 
-        /* BMA150 is constantly measuring and filtering, so it never sleeps.
-         * The ioctl in truth returns only 3 values, but buffer in kernel is
-         * defined as 8 shorts long. */
-        short bma150_data[8];
-        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) == 0);
-        abuf[index].x = bma150_data[0];
-        abuf[index].y = -bma150_data[1];
-        abuf[index].z = bma150_data[2];
+    /* BMA150 is constantly measuring and filtering, so it never sleeps.
+     * The ioctl in truth returns only 3 values, but buffer in kernel is
+     * defined as 8 shorts long. */
+    short bma150_data[8];
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) == 0);
+    abuf[index] = Vector(bma150_data[0], -bma150_data[1], bma150_data[2]);
 
-        /* Significance and range of values can be extracted from
-         * online AK 8973 manual. The kernel driver just passes the data on. */
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
-        short temperature = (signed char) akm_data[1];
-        mbuf[index].x = 127 - (unsigned char) akm_data[2];
-        mbuf[index].y = 127 - (unsigned char) akm_data[3];
-        mbuf[index].z = 127 - (unsigned char) akm_data[4];
+    /* Significance and range of values can be extracted from
+     * online AK 8973 manual. The kernel driver just passes the data on. */
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
+    short temperature = (signed char) akm_data[1];
+    mbuf[index] = Vector(127 - (unsigned char) akm_data[2], 127 - (unsigned char) akm_data[3], 127 - (unsigned char) akm_data[4]);
 
-        Vector a = abuf[0].add(abuf[1]).multiply(0.5f);
-        Vector m = mbuf[0].add(mbuf[1]).multiply(0.5f);
-        index = (index + 1) & 1;
+    Vector a = abuf[0].add(abuf[1]).multiply(0.5f);
+    Vector m = mbuf[0].add(mbuf[1]).multiply(0.5f);
+    index = (index + 1) & 1;
 
-        /* Calculate and set data readable on compass input. */
-        short final_data[12];
-        build_result_vector(a, temperature, m, final_data);
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) == 0);
-
-        sleep_until_next_update();
-    }
-
-    return NULL;
+    /* Calculate and set data readable on compass input. */
+    short final_data[12];
+    fill_result_vector(a, m, temperature, final_data);
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) == 0);
 }
 
-static void open_fds()
+void Akmd::wait_start()
 {
-    akm_fd = open(AKM_NAME, O_RDONLY);
-    SUCCEED(akm_fd != -1);
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_RESET, NULL) == 0);
-    calibrate_analog_apply();
-
-    bma150_fd = open(BMA150_NAME, O_RDONLY);
-    SUCCEED(bma150_fd != -1);
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_INIT, NULL) == 0);
-    
-    char rwbuf[8] = { 1, RANGE_BWIDTH_REG };
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ, &rwbuf) == 0);
-    rwbuf[2] = (rwbuf[1] & 0xf8) | 1; /* 47 Hz sampling */
-    rwbuf[0] = 2;
-    rwbuf[1] = RANGE_BWIDTH_REG;
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
+    /* When open, we enable BMA and wait for close event. */
+    int status;
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
+    SUCCEED(gettimeofday(&next_update, NULL) == 0);
 }
 
-int main(int argc, char **argv)
+void Akmd::start_bma()
 {
-    if (argc != 3) {
-        printf("Usage: akmd <mg> <tz>\n");
-        printf("\n");
-        printf("mg = magnetometer gain (0.4 dB)\n");
-        printf("tz = temperature zero offset (C)\n");
-        printf("\n");
-        printf("Both parameters are probably device model specific.\n");
-        return 1;
-    }
+    char bmode = BMA_MODE_NORMAL;
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
+}
 
-    fixed_analog_gain = 15;
-    analog_gain = atoi(argv[1]);
-    temperature_zero = atoi(argv[2]);
- 
-    open_fds();
-    calibrate_analog_apply();
+void Akmd::wait_stop()
+{
+    /* When open, we enable BMA and wait for close event. */
+    int status;
+    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) == 0);
+}
 
-    while (true) {
-        /* When open, we enable BMA and wait for close event. */
-        int status;
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
-        
-        char bmode = BMA_MODE_NORMAL;
-        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
-        SUCCEED(gettimeofday(&next_update, NULL) == 0);
+void Akmd::stop_bma()
+{        
+    char bmode = BMA_MODE_SLEEP;
+    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
+    SUCCEED(gettimeofday(&next_update, NULL) == 0);
+}
 
-        /* Start our read thread */
-        pthread_mutex_t read_lock;
-        SUCCEED(pthread_mutex_init(&read_lock, NULL) == 0);
-        SUCCEED(pthread_mutex_lock(&read_lock) == 0);
-        pthread_t thread_id;
-        SUCCEED(pthread_create(&thread_id, NULL, read_loop, &read_lock) == 0);
-
-        /* When closed, we disable BMA and wait for open event. */
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) == 0);
-        /* Signal our read thread to stop. */
-        SUCCEED(pthread_mutex_unlock(&read_lock) == 0);
-        void *result;
-        SUCCEED(pthread_join(thread_id, &result) == 0);
-        SUCCEED(pthread_mutex_destroy(&read_lock) == 0);
-        
-        bmode = BMA_MODE_SLEEP;
-        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
-    }
 }
