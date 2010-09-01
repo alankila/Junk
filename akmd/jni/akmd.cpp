@@ -317,7 +317,6 @@ void sleep_until_next_update()
          * every now and then, and it isn't horribly destructive. */
         if (sleep_time < -delay) {
             next_update = current_time;
-            LOGI("missed a beat (CPU/sensors too slow)");
         }
         return;
     }
