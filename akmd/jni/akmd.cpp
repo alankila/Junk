@@ -26,9 +26,10 @@
 namespace akmd {
 
 Akmd::Akmd(int magnetometer_gain, int temperature_zero)
-    : accelerometer(3600), magnetometer(120)
+    : accelerometer(3600), magnetometer(120), earth(0, 0, -256)
 {
-    this->analog_gain = magnetometer_gain;
+    fixed_magnetometer_gain = 15;
+    this->magnetometer_gain = magnetometer_gain;
     this->temperature_zero = temperature_zero;
 
     akm_fd = open(AKM_NAME, O_RDONLY);
@@ -47,10 +48,7 @@ Akmd::Akmd(int magnetometer_gain, int temperature_zero)
     rwbuf[1] = RANGE_BWIDTH_REG;
     SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
     
-    fixed_analog_gain = 15;
     calibrate_analog_apply();
-
-    earth = Vector(0, 0, -256);
 }
 
 Akmd::~Akmd() {
@@ -74,7 +72,7 @@ void Akmd::calibrate_analog_apply()
 {
     char params[6] = {
         akm_analog_offset(0), akm_analog_offset(1), akm_analog_offset(2),
-        fixed_analog_gain, fixed_analog_gain, fixed_analog_gain,
+        fixed_magnetometer_gain, fixed_magnetometer_gain, fixed_magnetometer_gain,
     };
 
     for (int i = 0; i < 6; i ++) {
@@ -82,7 +80,7 @@ void Akmd::calibrate_analog_apply()
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) == 0);
     }
     
-    digital_gain = powf(10.0f, (analog_gain - fixed_analog_gain) * 0.4f / 20.0f) * 16.0f;
+    digital_gain = powf(10.0f, (magnetometer_gain - fixed_magnetometer_gain) * 0.4f / 20.0f) * 16.0f;
 }
 
 /****************************************************************************/
@@ -100,7 +98,7 @@ void Akmd::calibrate_magnetometer_analog_helper(float val, int i)
     /* Autoadjust analog parameters */
     if (val > ANALOG_MAX || val < -ANALOG_MAX) {
         analog_offset[i] += val > ANALOG_MAX ? -1 : 1;
-        LOGI("Adjusting analog axis %d to %d because of value %f", i, analog_offset[i], val);
+        LOGI("Adjusting magnetometer axis %d to %d because of value %f", i, analog_offset[i], val);
         calibrate_analog_apply();
 
         /* The other axes are OK */
@@ -117,9 +115,9 @@ void Akmd::calibrate_magnetometer_analog_helper(float val, int i)
      * we risk having to constantly adjust the analog gain. We
      * should be able to detect this happening as user rotates the
      * device. */
-    if (rc_max[i] - rc_min[i] > BOUND_MAX && fixed_analog_gain > 0) {
-        fixed_analog_gain -= 1;
-        LOGI("Adjusting analog gain to %d", fixed_analog_gain);
+    if (rc_max[i] - rc_min[i] > BOUND_MAX && fixed_magnetometer_gain > 0) {
+        fixed_magnetometer_gain -= 1;
+        LOGI("Adjusting magnetometer gain to %d", fixed_magnetometer_gain);
         calibrate_analog_apply();
 
         /* Bounds will change on all axes. */

@@ -28,10 +28,10 @@ class Akmd {
     char temperature_zero;
     /* The analog offset */
     signed char analog_offset[3];
-    /* The user requested analog gain */
-    int analog_gain;
+    /* The user requested magnetometer gain */
+    int magnetometer_gain;
     /* The actual gain used on hardware */
-    int fixed_analog_gain;
+    int fixed_magnetometer_gain;
     /* Digital gain to compensate for analog setting. */
     float digital_gain;
 
