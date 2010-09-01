@@ -45,27 +45,21 @@
 
 using namespace akmd;
 
-typedef struct {
-    Vector v;
-    int time;
-} point_t;
-
 Calibrator magnetometer(120);
 Calibrator acceleration(3600);
 
-static struct timeval current_time;
 static struct timeval next_update;
 
 static int akm_fd, bma150_fd;
 
 /* Temperature is -(value-zero). */
-static char temperature_zero = 0;
+static char temperature_zero;
 /* The analog offset */
 static signed char analog_offset[3];
 /* The user requested analog gain */
 static int analog_gain;
 /* The actual gain used on hardware */
-static int fixed_analog_gain = 15;
+static int fixed_analog_gain;
 /* Digital gain to compensate for analog setting. */
 static float digital_gain;
 
@@ -304,6 +298,7 @@ void sleep_until_next_update()
     }
 
     /* Find out how long to sleep so that we achieve true periodic tick. */ 
+    struct timeval current_time;
     SUCCEED(gettimeofday(&current_time, NULL) == 0);
     next_update.tv_usec += delay * 1000;
     next_update.tv_sec += next_update.tv_usec / 1000000;
@@ -413,6 +408,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    fixed_analog_gain = 15;
     analog_gain = atoi(argv[1]);
     temperature_zero = atoi(argv[2]);
  
