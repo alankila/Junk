@@ -74,15 +74,11 @@ static float digital_gain;
 /****************************************************************************/
 static char akm_analog_offset(int i)
 {
-    /* AKM specification says that values 0 .. 127 are monotonously
-     * decreasing corrections, and values 128 .. 255 are
-     * monotonously increasing corrections and that 0 and 128
-     * are near each other. */
-    signed int corr = analog_offset[i];
+    signed char corr = analog_offset[i];
     if (corr < 0) {
         corr = 127 - corr;
     }
-    return corr;
+    return (char) corr;
 }
 
 static void calibrate_analog_apply()
@@ -106,6 +102,7 @@ static void calibrate_analog_apply()
 static void calibrate_magnetometer_analog_helper(float val, int i)
 {
     const float ANALOG_MAX = 126.0f;
+    const float BOUND_MAX = 240.0f;
     /* The rate of forgetting encountering the minimum or maximum bound.
      * Keeping this fairly large to make it less likely that analog gain
      * gets adjusted by mistake. */
@@ -125,6 +122,7 @@ static void calibrate_magnetometer_analog_helper(float val, int i)
 
         /* Destroy all calibration state, we'll have to start over. */
         magnetometer.reset();
+
         return;
     }
 
@@ -132,18 +130,17 @@ static void calibrate_magnetometer_analog_helper(float val, int i)
      * we risk having to constantly adjust the analog gain. We
      * should be able to detect this happening as user rotates the
      * device. */
-    if (rc_max[i] - rc_min[i] > ANALOG_MAX * 1.9f
-        && fixed_analog_gain > 0) {
+    if (rc_max[i] - rc_min[i] > BOUND_MAX && fixed_analog_gain > 0) {
         fixed_analog_gain -= 1;
         LOGI("Adjusting analog gain to %d", fixed_analog_gain);
+        calibrate_analog_apply();
 
-        /* Everything will change. Trash state and return. */
+        /* Bounds will change on all axes. */
         for (int j = 0; j < 3; j ++) {
             rc_min[j] = 0;
             rc_max[j] = 0;
         }
-        
-        calibrate_analog_apply();
+
         return;
     }
 
@@ -235,10 +232,13 @@ static void calibrate_accelerometer(Vector* a)
 /****************************************************************************/
 static void estimate_earth(Vector a, Vector* g)
 {
+    /* Smooth acceleration over time to try to establish a less unstable
+     * direction towards Earth. Probably the best we can do until gyroscopes.
+     */
     *g = g->multiply(0.9f).add(a.multiply(0.1f));
 }
 
-static int rad2deg(float v) {
+static float rad2deg(float v) {
     return v * (180.0f / (float) M_PI);
 }
 
