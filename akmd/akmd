@@ -1,10 +1,6 @@
 #!/system/bin/sh
 
-# 1st: analog offsets 0 .. 255
-# 2nd: analog gain 0 .. 15
-# 3rd: 0C reference value 0 .. 255
-
-MAGNETIC_GAIN="5"
-TEMPERATURE_ZERO="112"
+MAGNETIC_GAIN="5" # 0 .. 15
+TEMPERATURE_ZERO="112" # 0 .. 255
 
 exec akmd.free $MAGNETIC_GAIN $TEMPERATURE_ZERO
