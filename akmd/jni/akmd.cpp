@@ -399,12 +399,10 @@ int main(int argc, char **argv)
     if (argc != 3) {
         printf("Usage: akmd <mg> <tz>\n");
         printf("\n");
-        printf("mg         = magnetometer gain (0.4 dB)\n");
-        printf("tz         = temperature zero offset (C)\n");
+        printf("mg = magnetometer gain (0.4 dB)\n");
+        printf("tz = temperature zero offset (C)\n");
         printf("\n");
-        printf("Per-axis accelerometer offset needs to be calibrated per device.\n");
-        printf("Per-axis magnetic gain needs to be calibrated per device type.\n");
-        printf("Temperature offset needs to be calibrated per device type.\n");
+        printf("Both parameters are probably device model specific.\n");
         return 1;
     }
 
