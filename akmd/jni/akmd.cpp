@@ -23,6 +23,10 @@
 
 #include "akmd.hpp"
 
+static float rad2deg(float v) {
+    return v * (180.0f / (float) M_PI);
+}
+
 namespace akmd {
 
 Akmd::Akmd(int magnetometer_gain, int temperature_zero)
@@ -208,16 +212,8 @@ void Akmd::estimate_earth(Vector a)
     earth = earth.multiply(0.9f).add(a.multiply(0.1f));
 }
 
-static float rad2deg(float v) {
-    return v * (180.0f / (float) M_PI);
-}
-
 void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
 {
-    calibrate_accelerometer(&a);
-    calibrate_magnetometer(a, &m);
-    estimate_earth(a);
-
     /* From g, we need to discover 2 suitable vectors. Cross product
      * is used to establish orthogonal basis in E. */
     Vector ref(-1, 0, 0);
@@ -326,6 +322,11 @@ void Akmd::measure()
     Vector a = abuf[0].add(abuf[1]).multiply(0.5f);
     Vector m = mbuf[0].add(mbuf[1]).multiply(0.5f);
     index = (index + 1) & 1;
+
+    /* Handle calibrations. */    
+    calibrate_accelerometer(&a);
+    calibrate_magnetometer(a, &m);
+    estimate_earth(a);
 
     /* Calculate and set data readable on compass input. */
     short final_data[12];
