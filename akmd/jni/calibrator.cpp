@@ -51,9 +51,7 @@ void Calibrator::update(int time, Vector a, Vector v)
     int idx = classify(a.x/len) << 3 | classify(a.y/len) << 1 | (a.z > 0 ? 1 : 0);
 
     point_cloud[idx].time = time;
-    point_cloud[idx].v.x = v.x;
-    point_cloud[idx].v.y = v.y;
-    point_cloud[idx].v.z = v.z;
+    point_cloud[idx].v = v;
 }
 
 bool Calibrator::try_fit(int time, Vector* fc)
@@ -79,30 +77,24 @@ bool Calibrator::try_fit(int time, Vector* fc)
             continue;
         }
 
-        float x = point_cloud[i].v.x;
-        float y = point_cloud[i].v.y;
-        float z = point_cloud[i].v.z;
+        Vector v = point_cloud[i].v;
 
-        b.set(n, 0, -x*x);
-        a.set(n, 0, -2.0f*x);
-        a.set(n, 1, y*y);
-        a.set(n, 2, -2.0f*y);
-        a.set(n, 3, z*z);
-        a.set(n, 4, -2.0f*z);
+        b.set(n, 0, -v.x*v.x);
+        a.set(n, 0, -2.0f*v.x);
+        a.set(n, 1, v.y*v.y);
+        a.set(n, 2, -2.0f*v.y);
+        a.set(n, 3, v.z*v.z);
+        a.set(n, 4, -2.0f*v.z);
         a.set(n, 5, 1.0f);
 
         n ++;
     }
 
     float *x = Matrix::leastSquares(&a, &b);
-
-    fc[0].x = x[0];
-    fc[0].y = x[2] / x[1];
-    fc[0].z = x[4] / x[3];
-
-    fc[1].x = 1;
-    fc[1].y = sqrtf(x[1]);
-    fc[1].z = sqrtf(x[3]);
+    /* Center */
+    fc[0] = Vector(x[0], x[2] / x[1], x[4] / x[3]);
+    /* Scaling */
+    fc[1] = Vector(1, sqrtf(x[1]), sqrtf(x[3]));
 
     delete[] x;
 
