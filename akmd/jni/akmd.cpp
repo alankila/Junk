@@ -421,32 +421,30 @@ int main(int argc, char **argv)
     calibrate_analog_apply();
 
     while (true) {
-        pthread_t thread_id;
-        pthread_mutex_t read_lock;
-        int status;
-        char bmode;
-
         /* When open, we enable BMA and wait for close event. */
+        int status;
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
         
-        bmode = BMA_MODE_NORMAL;
+        char bmode = BMA_MODE_NORMAL;
         SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
         SUCCEED(gettimeofday(&next_update, NULL) == 0);
 
         /* Start our read thread */
+        pthread_mutex_t read_lock;
         SUCCEED(pthread_mutex_init(&read_lock, NULL) == 0);
         SUCCEED(pthread_mutex_lock(&read_lock) == 0);
+        pthread_t thread_id;
         SUCCEED(pthread_create(&thread_id, NULL, read_loop, &read_lock) == 0);
 
         /* When closed, we disable BMA and wait for open event. */
         SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) == 0);
-        bmode = BMA_MODE_SLEEP;
-        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
-
         /* Signal our read thread to stop. */
         SUCCEED(pthread_mutex_unlock(&read_lock) == 0);
         void *result;
         SUCCEED(pthread_join(thread_id, &result) == 0);
         SUCCEED(pthread_mutex_destroy(&read_lock) == 0);
+        
+        bmode = BMA_MODE_SLEEP;
+        SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
     }
 }
