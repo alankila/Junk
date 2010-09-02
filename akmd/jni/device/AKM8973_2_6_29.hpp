@@ -1,12 +1,15 @@
 #pragma once
 
 #include "device/ChipReader.hpp"
+#include "device/DataPublisher.hpp"
+#include "device/TemperatureReader.hpp"
 #include "util.hpp"
 #include "math/Vector.hpp"
 
 namespace akmd {
 
-class AKM8973_2_6_29 : public ChipReader {
+class AKM8973_2_6_29 : public ChipReader, public TemperatureReader, public DataPublisher
+{
     private:
 
     /* Temperature is -(value-zero). */
