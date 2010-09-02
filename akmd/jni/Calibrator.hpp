@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vector.hpp"
+#include "math/Vector.hpp"
 
 namespace akmd {
 

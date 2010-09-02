@@ -1,7 +1,7 @@
 #pragma once
 
-#include "vector.hpp"
 #include "device/ChipReader.hpp"
+#include "math/Vector.hpp"
 
 #define BMA150_NAME "/dev/bma150"
 

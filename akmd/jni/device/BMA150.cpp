@@ -1,6 +1,6 @@
 #include <fcntl.h>
 
-#include "device/bma150.hpp"
+#include "device/BMA150.hpp"
 #include "linux-2.6.29/bma150.h"
 #include "util.hpp"
 

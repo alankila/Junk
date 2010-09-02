@@ -1,6 +1,6 @@
 #pragma once
 
-#include "device/akm8973_2_6_29.hpp"
+#include "device/AKM8973_2_6_29.hpp"
 
 namespace akmd {
 

@@ -4,7 +4,7 @@
 
 #include <math.h>
 
-#include "vector.hpp"
+#include "math/Vector.hpp"
 
 namespace akmd {
 

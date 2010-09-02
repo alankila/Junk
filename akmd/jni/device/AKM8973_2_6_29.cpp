@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "device/akm8973_2_6_29.hpp"
+#include "device/AKM8973_2_6_29.hpp"
 #include "linux-2.6.29/akm8973.h"
 
 namespace akmd {

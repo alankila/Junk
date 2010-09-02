@@ -5,8 +5,8 @@
 #include <math.h>
 #include <stdlib.h>
 
-#include "calibrator.hpp"
-#include "matrix.hpp"
+#include "Calibrator.hpp"
+#include "math/Matrix.hpp"
 
 namespace akmd {    
 

@@ -1,4 +1,4 @@
-#include "device/akm8973_writer_2_6_29.hpp"
+#include "device/AKM8973_writer_2_6_29.hpp"
 
 namespace akmd {
 

@@ -17,7 +17,7 @@
 #include <sys/time.h>
 #include <time.h>
 
-#include "akmd.hpp"
+#include "Akmd.hpp"
 
 static float rad2deg(float v) {
     return v * (180.0f / (float) M_PI);

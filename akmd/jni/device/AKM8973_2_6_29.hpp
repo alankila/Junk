@@ -2,7 +2,7 @@
 
 #include "device/ChipReader.hpp"
 #include "util.hpp"
-#include "vector.hpp"
+#include "math/Vector.hpp"
 
 namespace akmd {
 

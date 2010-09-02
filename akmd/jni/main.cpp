@@ -16,11 +16,11 @@
 #include <pthread.h>
 #include <stdio.h>
 
-#include "akmd.hpp"
-#include "device/akm8973_2_6_29.hpp"
-#include "device/akm8973_temperature_2_6_29.hpp"
-#include "device/akm8973_writer_2_6_29.hpp"
-#include "device/bma150.hpp"
+#include "Akmd.hpp"
+#include "device/AKM8973_2_6_29.hpp"
+#include "device/AKM8973_temperature_2_6_29.hpp"
+#include "device/AKM8973_writer_2_6_29.hpp"
+#include "device/BMA150.hpp"
 
 using namespace akmd;
 

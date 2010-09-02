@@ -3,11 +3,11 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
-#include "calibrator.hpp"
+#include "Calibrator.hpp"
 #include "device/ChipReader.hpp"
 #include "device/ChipWriter.hpp"
 #include "util.hpp"
-#include "vector.hpp"
+#include "math/Vector.hpp"
 
 namespace akmd {
 
