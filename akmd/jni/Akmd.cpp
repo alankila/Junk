@@ -94,7 +94,9 @@ void Akmd::estimate_earth(Vector a)
 void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
 {
     /* From g, we need to discover 2 suitable vectors. Cross product
-     * is used to establish orthogonal basis in E. */
+     * is used to establish orthogonal basis in E. When porting the code
+     * to gyroscopes, you want to estimate E from combination of
+     * acceleration and gyro. */
     Vector ref(-1, 0, 0);
     Vector o1 = earth.cross(ref);
     Vector o2 = earth.cross(o1);
@@ -111,13 +113,12 @@ void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
     out[2] = roundf(90.0f - rad2deg(acosf(earth.x / earth.length())));
     
     out[3] = temperature;
-    out[4] = 3; /* Magnetic accuracy; could be defined as test of quality of sphere fit, but not evaluated right now */
-    out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
+    out[4] = 3;
+    out[5] = 3;
 
-    // Android wants 720 = 1G, Device has 256 = 1G. */
-    out[6] = roundf(a.x * (720.0f/256.0f));
-    out[7] = roundf(a.z * (720.0f/256.0f));
-    out[8] = -roundf(a.y * (720.0f/256.0f));
+    out[6] = roundf(a.x);
+    out[7] = roundf(a.z);
+    out[8] = -roundf(a.y);
 
     out[9] = roundf(m.x);
     out[10] = roundf(m.y);
@@ -129,7 +130,18 @@ void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
 /****************************************************************************/
 void Akmd::sleep_until_next_update()
 {
-    int delay = magnetometer_reader->get_delay();
+    int delay = 1000;
+    int candidate_delay;
+
+    ChipReader* chips[3] = { magnetometer_reader, accelerometer_reader, temperature_reader };
+    for (int i = 0; i < 3; i ++) {
+        /* Use the value from whoever wants the shortest delay,
+         * but -1 means this chip doesn't care */
+        int candidate_delay = chips[i]->get_delay();
+        if (candidate_delay > 0 && candidate_delay < delay) {
+            delay = candidate_delay;
+        }
+    }
 
     /* Decide if we want "fast" updates or "slow" updates. GAME and UI
      * are defined as <= 60.

@@ -41,7 +41,7 @@ Vector BMA150::read()
     abuf[index] = Vector(bma150_data[0], -bma150_data[1], bma150_data[2]);
     index = (index + 1) & 1;
 
-    return abuf[0].add(abuf[1]).multiply(0.5f);
+    return abuf[0].add(abuf[1]).multiply(0.5f * (720.0f / 256.0f));
 }
 
 void BMA150::start()
