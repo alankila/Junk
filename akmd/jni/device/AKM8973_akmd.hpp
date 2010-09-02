@@ -6,7 +6,7 @@
 
 namespace akmd {
 
-class AKM8973_2_6_29 : public ChipReader {
+class AKM8973_akmd : public ChipReader {
     private:
 
     /* Temperature is -(value-zero). */
@@ -35,8 +35,8 @@ class AKM8973_2_6_29 : public ChipReader {
     void calibrate_magnetometer_analog(Vector* m);
 
     public:
-    AKM8973_2_6_29(int gain);
-    ~AKM8973_2_6_29();
+    AKM8973_akmd(int gain);
+    ~AKM8973_akmd();
 
     int get_delay();
     Vector read();

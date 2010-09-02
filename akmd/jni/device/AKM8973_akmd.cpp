@@ -3,29 +3,29 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "device/AKM8973_2_6_29.hpp"
-#include "linux-2.6.29/akm8973.h"
+#include "device/AKM8973_akmd.hpp"
+#include "linux-2.6.29/akm8973_akmd.h"
 
 namespace akmd {
 
-AKM8973_2_6_29::AKM8973_2_6_29(int gain)
+AKM8973_akmd::AKM8973_akmd(int gain)
     : index(0), fixed_magnetometer_gain(15)
 {
     mbuf[0] = mbuf[1] = Vector();
 
     magnetometer_gain = gain;
 
-    fd = open("/dev/akm8973_daemon", O_RDONLY);
+    fd = open("/dev/akm8973_dev", O_RDONLY);
     SUCCEED(fd != -1);
     SUCCEED(ioctl(fd, ECS_IOCTL_RESET, NULL) == 0);
     calibrate_analog_apply();
 }
 
-AKM8973_2_6_29::~AKM8973_2_6_29() {
+AKM8973_akmd::~AKM8973_akmd() {
     SUCCEED(close(fd) == 0);
 }
 
-char AKM8973_2_6_29::akm_analog_offset(int i)
+char AKM8973_akmd::akm_analog_offset(int i)
 {
     signed char corr = analog_offset[i];
     if (corr < 0) {
@@ -34,7 +34,7 @@ char AKM8973_2_6_29::akm_analog_offset(int i)
     return (char) corr;
 }
 
-char AKM8973_2_6_29::calibrate_analog_apply()
+char AKM8973_akmd::calibrate_analog_apply()
 {
     char params[6] = {
         akm_analog_offset(0), akm_analog_offset(1), akm_analog_offset(2),
@@ -49,7 +49,7 @@ char AKM8973_2_6_29::calibrate_analog_apply()
     digital_gain = powf(10.0f, (magnetometer_gain - fixed_magnetometer_gain) * 0.4f / 20.0f) * 16.0f;
 }
 
-void AKM8973_2_6_29::calibrate_magnetometer_analog_helper(float val, int i)
+void AKM8973_akmd::calibrate_magnetometer_analog_helper(float val, int i)
 {
     const float ANALOG_MAX = 126.0f;
     const float BOUND_MAX = 240.0f;
@@ -102,7 +102,7 @@ void AKM8973_2_6_29::calibrate_magnetometer_analog_helper(float val, int i)
     }
 }
 
-void AKM8973_2_6_29::calibrate_magnetometer_analog(Vector* m)
+void AKM8973_akmd::calibrate_magnetometer_analog(Vector* m)
 {
     calibrate_magnetometer_analog_helper(m->x, 0);
     calibrate_magnetometer_analog_helper(m->y, 1);
@@ -112,13 +112,13 @@ void AKM8973_2_6_29::calibrate_magnetometer_analog(Vector* m)
     *m = m->multiply(digital_gain);
 }
 
-int AKM8973_2_6_29::get_delay() {
+int AKM8973_akmd::get_delay() {
     unsigned short delay;
     SUCCEED(ioctl(fd, ECS_IOCTL_GET_DELAY, &delay) == 0);
     return delay;
 }
 
-Vector AKM8973_2_6_29::read() {
+Vector AKM8973_akmd::read() {
     /* Measuring puts readable state to 0. It is going to take
      * some time before the values are ready. Not using SET_MODE
      * because it contains mdelay(1) which makes measurements spin CPU! */
@@ -143,32 +143,32 @@ Vector AKM8973_2_6_29::read() {
     return reading;
 }
 
-void AKM8973_2_6_29::publish(short* data)
+void AKM8973_akmd::publish(short* data)
 {
     SUCCEED(ioctl(fd, ECS_IOCTL_SET_YPR, data) == 0);
 }
 
-int AKM8973_2_6_29::get_temperature()
+int AKM8973_akmd::get_temperature()
 {
     return temperature;
 }
 
-void AKM8973_2_6_29::start()
+void AKM8973_akmd::start()
 {
 }
 
-void AKM8973_2_6_29::stop()
+void AKM8973_akmd::stop()
 {
 }
 
-void AKM8973_2_6_29::wait_start()
+void AKM8973_akmd::wait_start()
 {
     /* When open, we enable BMA and wait for close event. */
     int status;
     SUCCEED(ioctl(fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
 }
 
-void AKM8973_2_6_29::wait_stop()
+void AKM8973_akmd::wait_stop()
 {
     /* When open, we enable BMA and wait for close event. */
     int status;
