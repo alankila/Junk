@@ -17,6 +17,10 @@
 #include <stdio.h>
 
 #include "akmd.hpp"
+#include "device/akm8973_2_6_29.hpp"
+#include "device/akm8973_temperature_2_6_29.hpp"
+#include "device/akm8973_writer_2_6_29.hpp"
+#include "device/bma150.hpp"
 
 using namespace akmd;
 
@@ -47,12 +51,22 @@ int main(int argc, char **argv)
     }
 
     int magnetometer_gain = atoi(argv[1]);
-    int temperature_zero = atoi(argv[2]);
-    measurer = new Akmd(magnetometer_gain, temperature_zero);
+    float temperature_zero = atof(argv[2]);
+
+    LOGI("Akmd: opening devices");
+
+    AKM8973_2_6_29* magnetometer_reader = new AKM8973_2_6_29(magnetometer_gain);
+    BMA150* accelerometer_reader = new BMA150();
+    ChipReader* temperature_reader = new AKM8973_temperature_2_6_29(magnetometer_reader, temperature_zero);
+    ChipWriter* result_writer = new AKM8973_writer_2_6_29(magnetometer_reader);
+    measurer = new Akmd(magnetometer_reader, accelerometer_reader, temperature_reader, result_writer);
+
+    LOGI("Entering mainloop");
 
     while (true) {
-        measurer->wait_start();
-        measurer->start_bma();
+        magnetometer_reader->wait_start();
+        LOGI("Begin periodic update.");
+        measurer->start();
 
         /* Start our read thread */
         pthread_mutex_t read_lock;
@@ -61,7 +75,8 @@ int main(int argc, char **argv)
         pthread_t thread_id;
         SUCCEED(pthread_create(&thread_id, NULL, read_loop, &read_lock) == 0);
 
-        measurer->wait_stop();
+        magnetometer_reader->wait_stop();
+        LOGI("Stop periodic update.");
 
         /* Signal our read thread to stop. */
         SUCCEED(pthread_mutex_unlock(&read_lock) == 0);
@@ -69,9 +84,14 @@ int main(int argc, char **argv)
         SUCCEED(pthread_join(thread_id, &result) == 0);
         SUCCEED(pthread_mutex_destroy(&read_lock) == 0);
 
-        measurer->stop_bma();
+        measurer->stop();
     }
 
     delete measurer;
+    delete result_writer;
+    delete temperature_reader;
+    delete magnetometer_reader;
+    delete accelerometer_reader;
+
     return 0;
 }

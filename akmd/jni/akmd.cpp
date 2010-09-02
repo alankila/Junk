@@ -13,13 +13,9 @@
  * using an ioctl on the akm8973_daemon.
  */
 
-#include <fcntl.h>
 #include <math.h>
 #include <sys/time.h>
 #include <time.h>
-
-#include "linux-2.6.29/akm8973.h"
-#include "linux-2.6.29/bma150.h"
 
 #include "akmd.hpp"
 
@@ -29,139 +25,22 @@ static float rad2deg(float v) {
 
 namespace akmd {
 
-Akmd::Akmd(int magnetometer_gain, int temperature_zero)
+Akmd::Akmd(ChipReader* magnetometer_reader, ChipReader* accelerometer_reader,
+    ChipReader* temperature_reader, ChipWriter* result_writer)
     : accelerometer(3600), magnetometer(120), earth(0, 0, -256)
 {
-    fixed_magnetometer_gain = 15;
-    this->magnetometer_gain = magnetometer_gain;
-    this->temperature_zero = temperature_zero;
-
-    akm_fd = open(AKM_NAME, O_RDONLY);
-    SUCCEED(akm_fd != -1);
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_RESET, NULL) == 0);
-    calibrate_analog_apply();
-
-    bma150_fd = open(BMA150_NAME, O_RDONLY);
-    SUCCEED(bma150_fd != -1);
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_INIT, NULL) == 0);
-    
-    char rwbuf[8] = { 1, RANGE_BWIDTH_REG };
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ, &rwbuf) == 0);
-    rwbuf[2] = (rwbuf[1] & 0xf8) | 1; /* 47 Hz sampling */
-    rwbuf[0] = 2;
-    rwbuf[1] = RANGE_BWIDTH_REG;
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
-    
-    calibrate_analog_apply();
+    this->magnetometer_reader = magnetometer_reader;
+    this->accelerometer_reader = accelerometer_reader;
+    this->temperature_reader = temperature_reader;
+    this->result_writer = result_writer;
 }
 
 Akmd::~Akmd() {
-    SUCCEED(close(akm_fd) == 0);
-    SUCCEED(close(bma150_fd) == 0);
-}
-
-/****************************************************************************/
-/* Analog calibration                                                       */
-/****************************************************************************/
-char Akmd::akm_analog_offset(int i)
-{
-    signed char corr = analog_offset[i];
-    if (corr < 0) {
-        corr = 127 - corr;
-    }
-    return (char) corr;
-}
-
-void Akmd::calibrate_analog_apply()
-{
-    char params[6] = {
-        akm_analog_offset(0), akm_analog_offset(1), akm_analog_offset(2),
-        fixed_magnetometer_gain, fixed_magnetometer_gain, fixed_magnetometer_gain,
-    };
-
-    for (int i = 0; i < 6; i ++) {
-        char rwbuf[5] = { 2, 0xe1+i, params[i] };
-        SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &rwbuf) == 0);
-    }
-    
-    digital_gain = powf(10.0f, (magnetometer_gain - fixed_magnetometer_gain) * 0.4f / 20.0f) * 16.0f;
-}
-
-/****************************************************************************/
-/* Digital calibration                                                      */
-/****************************************************************************/
-void Akmd::calibrate_magnetometer_analog_helper(float val, int i)
-{
-    const float ANALOG_MAX = 126.0f;
-    const float BOUND_MAX = 240.0f;
-    /* The rate of forgetting encountering the minimum or maximum bound.
-     * Keeping this fairly large to make it less likely that analog gain
-     * gets adjusted by mistake. */
-    const float CALIBRATE_DECAY = 0.1f;
-
-    /* Autoadjust analog parameters */
-    if (val > ANALOG_MAX || val < -ANALOG_MAX) {
-        analog_offset[i] += val > ANALOG_MAX ? -1 : 1;
-        LOGI("Adjusting magnetometer axis %d to %d because of value %f", i, analog_offset[i], val);
-        calibrate_analog_apply();
-
-        /* The other axes are OK */
-        rc_min[i] = 0;
-        rc_max[i] = 0;
-
-        /* Destroy all calibration state, we'll have to start over. */
-        magnetometer.reset();
-
-        return;
-    }
-
-    /* If recorded digital bounds get close to completely used,
-     * we risk having to constantly adjust the analog gain. We
-     * should be able to detect this happening as user rotates the
-     * device. */
-    if (rc_max[i] - rc_min[i] > BOUND_MAX && fixed_magnetometer_gain > 0) {
-        fixed_magnetometer_gain -= 1;
-        LOGI("Adjusting magnetometer gain to %d", fixed_magnetometer_gain);
-        calibrate_analog_apply();
-
-        /* Bounds will change on all axes. */
-        for (int j = 0; j < 3; j ++) {
-            rc_min[j] = 0;
-            rc_max[j] = 0;
-        }
-
-        return;
-    }
-
-    rc_min[i] += CALIBRATE_DECAY;
-    rc_max[i] -= CALIBRATE_DECAY;
-
-    /* minimum value seen */
-    if (rc_min[i] > val) {
-        rc_min[i] = val;
-    }
-
-    /* maximum value seen */
-    if (rc_max[i] < val) {
-        rc_max[i] = val;
-    }
-}
-
-void Akmd::calibrate_magnetometer_analog(Vector* m)
-{
-    calibrate_magnetometer_analog_helper(m->x, 0);
-    calibrate_magnetometer_analog_helper(m->y, 1);
-    calibrate_magnetometer_analog_helper(m->z, 2);    
-
-    /* Apply 16-bit digital gain factor to scale 8->12 bits. */
-    *m = m->multiply(digital_gain);
 }
 
 void Akmd::calibrate_magnetometer(Vector a, Vector* m)
 {
     const int REFRESH = 1;
-
-    calibrate_magnetometer_analog(m);
 
     magnetometer.update(next_update.tv_sec, a, *m);
     if (magnetometer.fit_time <= next_update.tv_sec - REFRESH) {
@@ -231,7 +110,7 @@ void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
     /* roll */
     out[2] = roundf(90.0f - rad2deg(acosf(earth.x / earth.length())));
     
-    out[3] = -(temperature + temperature_zero);
+    out[3] = temperature;
     out[4] = 3; /* Magnetic accuracy; could be defined as test of quality of sphere fit, but not evaluated right now */
     out[5] = 3; /* BMA150 accuracy; no idea how to determine. */
 
@@ -250,8 +129,7 @@ void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
 /****************************************************************************/
 void Akmd::sleep_until_next_update()
 {
-    unsigned short delay;
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_DELAY, &delay) == 0);
+    int delay = magnetometer_reader->get_delay();
 
     /* Decide if we want "fast" updates or "slow" updates. GAME and UI
      * are defined as <= 60.
@@ -294,34 +172,10 @@ void Akmd::sleep_until_next_update()
 
 void Akmd::measure()
 {
-    /* Measuring puts readable state to 0. It is going to take
-     * some time before the values are ready. Not using SET_MODE
-     * because it contains mdelay(1) which makes measurements spin CPU! */
-    char akm_data[5] = { 2, AKECS_REG_MS1, AKECS_MODE_MEASURE };
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_WRITE, &akm_data) == 0);
-    
-    /* Sleep for 300 us, which is the measurement interval. */ 
-    struct timespec interval;
-    interval.tv_sec = 0;
-    interval.tv_nsec = 300000;
-    SUCCEED(nanosleep(&interval, NULL) == 0);
-
-    /* BMA150 is constantly measuring and filtering, so it never sleeps.
-     * The ioctl in truth returns only 3 values, but buffer in kernel is
-     * defined as 8 shorts long. */
-    short bma150_data[8];
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_READ_ACCELERATION, &bma150_data) == 0);
-    abuf[index] = Vector(bma150_data[0], -bma150_data[1], bma150_data[2]);
-
-    /* Significance and range of values can be extracted from
-     * online AK 8973 manual. The kernel driver just passes the data on. */
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GETDATA, &akm_data) == 0);
-    short temperature = (signed char) akm_data[1];
-    mbuf[index] = Vector(127 - (unsigned char) akm_data[2], 127 - (unsigned char) akm_data[3], 127 - (unsigned char) akm_data[4]);
-
-    Vector a = abuf[0].add(abuf[1]).multiply(0.5f);
-    Vector m = mbuf[0].add(mbuf[1]).multiply(0.5f);
-    index = (index + 1) & 1;
+    Vector a = accelerometer_reader->read();
+    Vector m = magnetometer_reader->read();
+    Vector temp = temperature_reader->read();
+    short temperature = (short) temp.x;
 
     /* Handle calibrations. */    
     calibrate_accelerometer(&a);
@@ -331,35 +185,22 @@ void Akmd::measure()
     /* Calculate and set data readable on compass input. */
     short final_data[12];
     fill_result_vector(a, m, temperature, final_data);
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_SET_YPR, &final_data) == 0);
+    result_writer->write(final_data);
 }
 
-void Akmd::wait_start()
+void Akmd::start()
 {
-    /* When open, we enable BMA and wait for close event. */
-    int status;
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_OPEN_STATUS, &status) == 0);
+    accelerometer_reader->start();
+    magnetometer_reader->start();
+    temperature_reader->start();
     SUCCEED(gettimeofday(&next_update, NULL) == 0);
 }
 
-void Akmd::start_bma()
+void Akmd::stop()
 {
-    char bmode = BMA_MODE_NORMAL;
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
-}
-
-void Akmd::wait_stop()
-{
-    /* When open, we enable BMA and wait for close event. */
-    int status;
-    SUCCEED(ioctl(akm_fd, ECS_IOCTL_GET_CLOSE_STATUS, &status) == 0);
-}
-
-void Akmd::stop_bma()
-{        
-    char bmode = BMA_MODE_SLEEP;
-    SUCCEED(ioctl(bma150_fd, BMA_IOCTL_SET_MODE, &bmode) == 0);
-    SUCCEED(gettimeofday(&next_update, NULL) == 0);
+    accelerometer_reader->stop();
+    magnetometer_reader->stop();
+    temperature_reader->stop();
 }
 
 }
