@@ -17,7 +17,7 @@ OrientationAdapter::~OrientationAdapter()
 
 Vector OrientationAdapter::read() {
     Vector a = accelerometer->read();
-    earth = earth.multiply(0.9f).add(a.multiply(0.1f));
+    earth = earth.multiply(0.8f).add(a.multiply(0.2f));
 
     Vector ref(-1, 0, 0);
     Vector o1 = earth.cross(ref);

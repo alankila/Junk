@@ -36,8 +36,13 @@ int BMA150::get_delay()
 void BMA150::calibrate()
 {
     const int REFRESH = 60;
+    /* Demanded length & angle accuracy before the vector is trusted to
+     * represent gravity. */
+    const float ERROR = 0.05f;
+    /* Exponential average applied on acceleration to estimate gravity. */
+    const float GRAVITY_SMOOTH = 0.8f;
 
-    accelerometer_g = accelerometer_g.multiply(0.8f).add(a.multiply(0.2f));
+    accelerometer_g = accelerometer_g.multiply(GRAVITY_SMOOTH).add(a.multiply(1.0f - GRAVITY_SMOOTH));
 
     /* a and g must have about the same length and point to about same
      * direction before I trust the value accumulated to g */
@@ -49,8 +54,8 @@ void BMA150::calibrate()
      * trigger the calibration; I trust the errors to even out. */
     if (al != 0
         && gl != 0
-        && fabsf(al - gl) < 0.10f
-        && a.dot(accelerometer_g) / (al * gl) > 0.90f) {
+        && fabsf(al - gl) < ERROR
+        && a.dot(accelerometer_g) / (al * gl) > 1.0f - ERROR) {
 
         /* Going to trust this point. */
         accelerometer.update(next_update.tv_sec, accelerometer_g);
