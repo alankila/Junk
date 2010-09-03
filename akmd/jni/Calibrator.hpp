@@ -15,6 +15,8 @@ class Calibrator {
     private:
     int validity;
 
+    int minimum_points_needed;
+
     int idx;
     point_t point_cloud[PCR];
     Vector old_nv;

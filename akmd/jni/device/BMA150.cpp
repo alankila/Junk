@@ -35,12 +35,12 @@ int BMA150::get_delay()
 
 void BMA150::calibrate()
 {
-    const int REFRESH = 60;
+    const int REFRESH = 10;
     /* Demanded length to match with the long-term average before the vector
      * is trusted to represent gravity. */
     const float ERROR = 0.05f;
     /* Exponential average applied on acceleration to estimate gravity. */
-    const float GRAVITY_SMOOTH = 0.5f;
+    const float GRAVITY_SMOOTH = 0.8f;
 
     accelerometer_g = accelerometer_g.multiply(GRAVITY_SMOOTH).add(a.multiply(1.0f - GRAVITY_SMOOTH));
 

@@ -22,6 +22,7 @@ void Calibrator::reset()
     center = Vector(0, 0, 0);
     scale = Vector(1, 1, 1);
     old_nv = Vector(1, 0, 0);
+    minimum_points_needed = 6;
     idx = 0;
     memset(point_cloud, 0, sizeof(point_cloud));
 }
@@ -84,8 +85,15 @@ bool Calibrator::try_fit(int time)
     }
 
     /* Less than required bins filled with recent data? */
-    if (n < PCR/2) {
+    if (n < minimum_points_needed) {
         return false;
+    }
+
+    /* Progressively require more and more points until saturated (at 50 %) */
+    if (n < PCR/2) {
+        minimum_points_needed = n;
+    } else {
+        minimum_points_needed = PCR/2;
     }
 
     fit_time = time;
