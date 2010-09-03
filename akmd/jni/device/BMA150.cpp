@@ -36,11 +36,11 @@ int BMA150::get_delay()
 void BMA150::calibrate()
 {
     const int REFRESH = 60;
-    /* Demanded length & angle accuracy before the vector is trusted to
-     * represent gravity. */
+    /* Demanded length to match with the long-term average before the vector
+     * is trusted to represent gravity. */
     const float ERROR = 0.05f;
     /* Exponential average applied on acceleration to estimate gravity. */
-    const float GRAVITY_SMOOTH = 0.8f;
+    const float GRAVITY_SMOOTH = 0.5f;
 
     accelerometer_g = accelerometer_g.multiply(GRAVITY_SMOOTH).add(a.multiply(1.0f - GRAVITY_SMOOTH));
 
@@ -49,13 +49,9 @@ void BMA150::calibrate()
     float al = a.length();
     float gl = accelerometer_g.length();
 
-    /* The alignment of vector lengths and directions must be better than ~10 %.
-     * This doesn't sound like much, but several dozen vectors are required to
-     * trigger the calibration; I trust the errors to even out. */
     if (al != 0
         && gl != 0
-        && fabsf(al - gl) < ERROR
-        && a.dot(accelerometer_g) / (al * gl) > 1.0f - ERROR) {
+        && fabsf(al - gl) < ERROR) {
 
         /* Going to trust this point. */
         accelerometer.update(next_update.tv_sec, accelerometer_g);
