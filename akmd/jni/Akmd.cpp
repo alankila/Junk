@@ -65,7 +65,7 @@ void Akmd::fill_result_vector(Vector o, Vector a, Vector m, short temperature, s
 /****************************************************************************/
 void Akmd::sleep_until_next_update()
 {
-    int delay = 1000;
+    int delay = 200; /* Based on SensorManager.SENSOR_DELAY_NORMAL */
     int candidate_delay;
 
     ChipReader* chips[3] = { magnetometer_reader, accelerometer_reader, temperature_reader };
@@ -78,12 +78,14 @@ void Akmd::sleep_until_next_update()
         }
     }
 
-    /* Decide if we want "fast" updates or "slow" updates. GAME and UI
-     * are defined as <= 60.
+    /* Decide if we want "fast" updates or "slow" updates.
+     * FASTEST, GAME and UI are defined as <= 60.
      *
-     * We prefer a fixed rate, because accelerometer is optimal at its
-     * maximum filtering state, 24 Hz. So we sample at 47 Hz and then
-     * average successive samples for both magnetometer and accelerometer.
+     * The reason I do this stuff is to guarantee some stability in the
+     * sampling, and to make sure that accelerometer -- which only gives
+     * about 25 good values per second -- has averaged sufficient samples.
+     * I sample twice per given interval, but no faster than is practically
+     * possible.
      */
     if (delay <= 60) {
         delay = 21;
