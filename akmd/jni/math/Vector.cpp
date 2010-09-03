@@ -32,6 +32,11 @@ Vector Vector::multiply(Vector o)
     return Vector(x * o.x, y * o.y, z * o.z);
 }
 
+Vector Vector::divide(float k)
+{
+    return multiply(1.0f / k);
+}
+
 Vector Vector::add(Vector o) {
     return Vector(x + o.x, y + o.y, z + o.z);
 }

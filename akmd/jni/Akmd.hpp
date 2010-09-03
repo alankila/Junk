@@ -16,11 +16,12 @@ class Akmd {
     /* Magnetic */
     ChipReader* magnetometer_reader;
     Calibrator magnetometer;
+
+    /* Gyroscope */
+    ChipReader* orientation_reader;
   
     /* Accelerometer */  
     ChipReader* accelerometer_reader;
-    Calibrator accelerometer;
-    Vector accelerometer_g;
     
     /* Temperature */
     ChipReader* temperature_reader;
@@ -31,16 +32,11 @@ class Akmd {
     /* Desired start point of next measurement interval. */
     struct timeval next_update;
 
-    /* Direction to Earth center */
-    Vector earth;
-    
     void calibrate_magnetometer(Vector a, Vector* m);
-    void calibrate_accelerometer(Vector* a);
-    void estimate_earth(Vector a);
-    void fill_result_vector(Vector a, Vector m, short temperature, short* out);
+    void fill_result_vector(Vector o, Vector a, Vector m, short temperature, short* out);
 
     public:
-    Akmd(ChipReader* a, ChipReader* m, ChipReader* t, DataPublisher* r);
+    Akmd(ChipReader* o, ChipReader* a, ChipReader* m, ChipReader* t, DataPublisher* r);
     ~Akmd();
     void measure();
     void sleep_until_next_update();

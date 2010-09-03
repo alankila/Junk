@@ -1,5 +1,8 @@
 #pragma once
 
+#include <sys/time.h>
+
+#include "Calibrator.hpp"
 #include "device/ChipReader.hpp"
 #include "device/DataPublisher.hpp"
 #include "device/TemperatureReader.hpp"
@@ -24,24 +27,31 @@ class AKM8973_2_6_29 : public ChipReader, public TemperatureReader, public DataP
     float digital_gain;
 
     /* Misc. measurement data */
+    struct timeval next_update;
     int fd;
     short temperature;
     int index;
     Vector mbuf[2];
 
+    Vector m;
+
     float rc_min[3];
     float rc_max[3];
+
+    Calibrator magnetometer;
 
     char akm_analog_offset(int i);
     char calibrate_analog_apply();
     void calibrate_magnetometer_analog_helper(float val, int i);
-    void calibrate_magnetometer_analog(Vector* m);
+    void calibrate_magnetometer_analog();
+    void calibrate();
 
     public:
     AKM8973_2_6_29(int gain);
     ~AKM8973_2_6_29();
 
     int get_delay();
+    void measure();
     Vector read();
 
     void start();

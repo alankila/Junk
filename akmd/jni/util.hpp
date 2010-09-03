@@ -1,6 +1,7 @@
 #pragma once
 
 #include <android/log.h>
+#include <math.h>
 #include <errno.h>
 #include <stdlib.h>
 
@@ -10,3 +11,7 @@ exit(1); \
 }
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
+
+static float rad2deg(float v) {
+    return v * (180.0f / (float) M_PI);
+}

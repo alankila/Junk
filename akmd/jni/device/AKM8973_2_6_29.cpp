@@ -9,7 +9,7 @@
 namespace akmd {
 
 AKM8973_2_6_29::AKM8973_2_6_29(int gain)
-    : index(0), fixed_magnetometer_gain(15)
+    : index(0), fixed_magnetometer_gain(15), magnetometer(120)
 {
     mbuf[0] = mbuf[1] = Vector();
 
@@ -102,14 +102,28 @@ void AKM8973_2_6_29::calibrate_magnetometer_analog_helper(float val, int i)
     }
 }
 
-void AKM8973_2_6_29::calibrate_magnetometer_analog(Vector* m)
+void AKM8973_2_6_29::calibrate_magnetometer_analog()
 {
-    calibrate_magnetometer_analog_helper(m->x, 0);
-    calibrate_magnetometer_analog_helper(m->y, 1);
-    calibrate_magnetometer_analog_helper(m->z, 2);    
+    calibrate_magnetometer_analog_helper(m.x, 0);
+    calibrate_magnetometer_analog_helper(m.y, 1);
+    calibrate_magnetometer_analog_helper(m.z, 2);    
 
     /* Apply 16-bit digital gain factor to scale 8->12 bits. */
-    *m = m->multiply(digital_gain);
+    m = m.multiply(digital_gain);
+}
+
+void AKM8973_2_6_29::calibrate()
+{
+    const int REFRESH = 1;
+
+    magnetometer.update(next_update.tv_sec, m);
+    if (magnetometer.fit_time <= next_update.tv_sec - REFRESH) {
+        magnetometer.try_fit(next_update.tv_sec);
+    }
+
+    /* Correct for scale and offset. */
+    m = m.add(magnetometer.center.multiply(-1));
+    m = m.multiply(magnetometer.scale);
 }
 
 int AKM8973_2_6_29::get_delay() {
@@ -118,7 +132,9 @@ int AKM8973_2_6_29::get_delay() {
     return delay;
 }
 
-Vector AKM8973_2_6_29::read() {
+void AKM8973_2_6_29::measure() {
+    SUCCEED(gettimeofday(&next_update, NULL) == 0);
+
     /* Measuring puts readable state to 0. It is going to take
      * some time before the values are ready. Not using SET_MODE
      * because it contains mdelay(1) which makes measurements spin CPU! */
@@ -138,9 +154,14 @@ Vector AKM8973_2_6_29::read() {
     mbuf[index] = Vector(127 - (unsigned char) akm_data[2], 127 - (unsigned char) akm_data[3], 127 - (unsigned char) akm_data[4]);
     index = (index + 1) & 1;
     
-    Vector reading = mbuf[0].add(mbuf[1]).multiply(0.5f);
-    calibrate_magnetometer_analog(&reading);
-    return reading;
+    m = mbuf[0].add(mbuf[1]).multiply(0.5f);
+    calibrate_magnetometer_analog();
+    calibrate();
+}
+
+Vector AKM8973_2_6_29::read()
+{
+    return m;
 }
 
 void AKM8973_2_6_29::publish(short* data)

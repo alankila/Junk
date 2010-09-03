@@ -19,16 +19,16 @@
 
 #include "Akmd.hpp"
 
-static float rad2deg(float v) {
-    return v * (180.0f / (float) M_PI);
-}
-
 namespace akmd {
 
-Akmd::Akmd(ChipReader* magnetometer_reader, ChipReader* accelerometer_reader,
-    ChipReader* temperature_reader, DataPublisher* result_writer)
-    : accelerometer(3600), magnetometer(120), earth(0, 0, -256)
+Akmd::Akmd(ChipReader* orientation_reader,
+    ChipReader* magnetometer_reader,
+    ChipReader* accelerometer_reader,
+    ChipReader* temperature_reader,
+    DataPublisher* result_writer)
+    : magnetometer(120)
 {
+    this->orientation_reader = orientation_reader;
     this->magnetometer_reader = magnetometer_reader;
     this->accelerometer_reader = accelerometer_reader;
     this->temperature_reader = temperature_reader;
@@ -38,79 +38,14 @@ Akmd::Akmd(ChipReader* magnetometer_reader, ChipReader* accelerometer_reader,
 Akmd::~Akmd() {
 }
 
-void Akmd::calibrate_magnetometer(Vector a, Vector* m)
+void Akmd::fill_result_vector(Vector o, Vector a, Vector m, short temperature, short* out)
 {
-    const int REFRESH = 1;
-
-    magnetometer.update(next_update.tv_sec, a, *m);
-    if (magnetometer.fit_time <= next_update.tv_sec - REFRESH) {
-        magnetometer.try_fit(next_update.tv_sec);
-    }
-
-    /* Correct for scale and offset. */
-    *m = m->add(magnetometer.center.multiply(-1));
-    *m = m->multiply(magnetometer.scale);
-}
-
-void Akmd::calibrate_accelerometer(Vector* a)
-{
-    const int REFRESH = 60;
-
-    accelerometer_g = accelerometer_g.multiply(0.8f).add(a->multiply(0.2f));
-
-    /* a and g must have about the same length and point to about same
-     * direction before I trust the value accumulated to g */
-    float al = a->length();
-    float gl = accelerometer_g.length();
-
-    /* The alignment of vector lengths and directions must be better than 5 % */
-    if (al != 0
-        && gl != 0
-        && fabsf(al - gl) < 0.04f
-        && a->dot(accelerometer_g) / (al * gl) > 0.96f) {
-
-        /* Going to trust this point. */
-        accelerometer.update(next_update.tv_sec, *a, accelerometer_g);
-        if (accelerometer.fit_time <= next_update.tv_sec - REFRESH) {
-            accelerometer.try_fit(next_update.tv_sec);
-        }
-    }
-
-    *a = a->add(accelerometer.center.multiply(-1));
-    *a = a->multiply(accelerometer.scale);
-}
-
-/****************************************************************************/
-/* Sensor output calculation                                                */
-/****************************************************************************/
-void Akmd::estimate_earth(Vector a)
-{
-    /* Smooth acceleration over time to try to establish a less unstable
-     * direction towards Earth. Probably the best we can do until gyroscopes.
-     */
-    earth = earth.multiply(0.9f).add(a.multiply(0.1f));
-}
-
-void Akmd::fill_result_vector(Vector a, Vector m, short temperature, short* out)
-{
-    /* From g, we need to discover 2 suitable vectors. Cross product
-     * is used to establish orthogonal basis in E. When porting the code
-     * to gyroscopes, you want to estimate E from combination of
-     * acceleration and gyro. */
-    Vector ref(-1, 0, 0);
-    Vector o1 = earth.cross(ref);
-    Vector o2 = earth.cross(o1);
-    
-    /* Now project magnetic field on components o1 and o2. */
-    float o1l = m.dot(o1) * o2.length();
-    float o2l = m.dot(o2) * o1.length();
-
     /* Establish the angle in E */
-    out[0] = roundf(180.0f - rad2deg(atan2f(o2l, o1l)));
+    out[0] = roundf(o.x);
     /* pitch */
-    out[1] = roundf(rad2deg(atan2f(earth.y, -earth.z)));
+    out[1] = roundf(o.y);
     /* roll */
-    out[2] = roundf(90.0f - rad2deg(acosf(earth.x / earth.length())));
+    out[2] = roundf(o.z);
     
     out[3] = temperature;
     out[4] = 3;
@@ -184,19 +119,20 @@ void Akmd::sleep_until_next_update()
 
 void Akmd::measure()
 {
+    orientation_reader->measure();
+    accelerometer_reader->measure();
+    magnetometer_reader->measure();
+    temperature_reader->measure();
+
+    Vector o = orientation_reader->read();
     Vector a = accelerometer_reader->read();
     Vector m = magnetometer_reader->read();
     Vector temp = temperature_reader->read();
     short temperature = (short) temp.x;
 
-    /* Handle calibrations. */    
-    calibrate_accelerometer(&a);
-    calibrate_magnetometer(a, &m);
-    estimate_earth(a);
-
     /* Calculate and set data readable on compass input. */
     short final_data[12];
-    fill_result_vector(a, m, temperature, final_data);
+    fill_result_vector(o, a, m, temperature, final_data);
     result_writer->publish(final_data);
 }
 

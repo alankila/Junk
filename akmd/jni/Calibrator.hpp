@@ -4,7 +4,7 @@
 
 namespace akmd {
 
-#define PCR 32 /* record this number of vectors around the device */
+#define PCR 64 /* record this number of vectors around the device */
 
 typedef struct {
     Vector v;
@@ -14,9 +14,10 @@ typedef struct {
 class Calibrator {
     private:
     int validity;
-    point_t point_cloud[PCR];
 
-    static int classify(float value);
+    int idx;
+    point_t point_cloud[PCR];
+    Vector old_nv;
 
     public:
     int fit_time;
@@ -26,7 +27,7 @@ class Calibrator {
     Calibrator(int validity);
     ~Calibrator();
 
-    void update(int time, Vector bin, Vector value);
+    void update(int time, Vector v);
     bool try_fit(int time);
     void reset();
 };

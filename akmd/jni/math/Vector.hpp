@@ -11,6 +11,7 @@ class Vector {
     Vector add(Vector o);
     Vector multiply(float k);
     Vector multiply(Vector o);
+    Vector divide(float o);
     float dot(Vector o);
     Vector cross(Vector o);
     float length();

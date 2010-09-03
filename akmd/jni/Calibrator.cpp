@@ -21,6 +21,8 @@ void Calibrator::reset()
     fit_time = 0;
     center = Vector(0, 0, 0);
     scale = Vector(1, 1, 1);
+    old_nv = Vector(1, 0, 0);
+    idx = 0;
     memset(point_cloud, 0, sizeof(point_cloud));
 }
 
@@ -28,33 +30,48 @@ Calibrator::~Calibrator()
 {
 }
 
-#if PCR != 32
-#error "PCR must be 32 for this version of classify()"
-#endif
-int Calibrator::classify(float v)
+void Calibrator::update(int time, Vector v)
 {
-    int i = 0;
-    float ref = -0.5f;
-    while (v > ref && i < 3) {
-        ref += 0.5f;
-        i ++;
-    }
-    return i;
-}
+    const float SIMILARITY = 0.9f; /* 25 degrees deviation, 14 vectors per circle */
 
-void Calibrator::update(int time, Vector a, Vector v)
-{
-    float len = a.length();
-    if (len == 0) {
+    float vl = v.length();
+    if (vl == 0.0f) {
         return;
     }
 
-    /* 3rd vector is not independent because we are normalized. It can
-     * point above or below the xy plane, though, so total of 2+2+1 bits. */
-    int idx = classify(a.x/len) << 3 | classify(a.y/len) << 1 | (a.z > 0 ? 1 : 0);
+    Vector nv = v.divide(vl);
+
+    /* Require sampled vectors to point to fairly different directions
+     * before accepting another. */
+    float similarity = nv.dot(old_nv);
+    if (similarity > SIMILARITY) {
+        return;
+    }
+    old_nv = nv;
+
+    /* Check if we already have a vector nearly to same direction,
+     * if so replace that one. This helps in not destroying our
+     * history of vectors if user just jiggles device back and forth. */
+    for (int i = 0; i < PCR; i ++) {
+        if (point_cloud[i].time < time - validity) {
+            idx = i;
+            break;
+        }
+
+        Vector c = point_cloud[idx].v;
+        Vector nc = c.divide(c.length());
+
+        float similarity = nv.dot(nc);
+        if (similarity > SIMILARITY) {
+            idx = i;
+            break;
+        }
+    }
 
     point_cloud[idx].time = time;
     point_cloud[idx].v = v;
+    /* Round-robin vector reuse */
+    idx = (idx + 1) & (PCR - 1);
 }
 
 bool Calibrator::try_fit(int time)
@@ -66,8 +83,8 @@ bool Calibrator::try_fit(int time)
         }
     }
 
-    /* Less than half of bins filled with recent data? */
-    if (n < PCR/2) {
+    /* Less than third of bins filled with recent data? */
+    if (n < PCR/3) {
         return false;
     }
 

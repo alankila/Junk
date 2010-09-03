@@ -7,7 +7,7 @@
 namespace akmd {
 
 BMA150::BMA150()
-: index(0)
+: index(0), accelerometer(3600)
 {
     abuf[0] = abuf[1] = Vector();
 
@@ -23,16 +23,50 @@ BMA150::BMA150()
     SUCCEED(ioctl(fd, BMA_IOCTL_WRITE, &rwbuf) == 0);
 }
 
-BMA150::~BMA150() {
+BMA150::~BMA150()
+{
     SUCCEED(close(fd) == 0);
 }
 
-int BMA150::get_delay() {
+int BMA150::get_delay()
+{
     return -1;
 }
 
-Vector BMA150::read()
+void BMA150::calibrate()
 {
+    const int REFRESH = 60;
+
+    accelerometer_g = accelerometer_g.multiply(0.8f).add(a.multiply(0.2f));
+
+    /* a and g must have about the same length and point to about same
+     * direction before I trust the value accumulated to g */
+    float al = a.length();
+    float gl = accelerometer_g.length();
+
+    /* The alignment of vector lengths and directions must be better than ~10 %.
+     * This doesn't sound like much, but several dozen vectors are required to
+     * trigger the calibration; I trust the errors to even out. */
+    if (al != 0
+        && gl != 0
+        && fabsf(al - gl) < 0.10f
+        && a.dot(accelerometer_g) / (al * gl) > 0.90f) {
+
+        /* Going to trust this point. */
+        accelerometer.update(next_update.tv_sec, accelerometer_g);
+        if (accelerometer.fit_time <= next_update.tv_sec - REFRESH) {
+            accelerometer.try_fit(next_update.tv_sec);
+        }
+    }
+
+    a = a.add(accelerometer.center.multiply(-1));
+    a = a.multiply(accelerometer.scale);
+}
+
+void BMA150::measure()
+{
+    SUCCEED(gettimeofday(&next_update, NULL) == 0);
+
     /* BMA150 is constantly measuring and filtering, so it never sleeps.
      * The ioctl in truth returns only 3 values, but buffer in kernel is
      * defined as 8 shorts long. */
@@ -41,7 +75,13 @@ Vector BMA150::read()
     abuf[index] = Vector(bma150_data[0], -bma150_data[1], bma150_data[2]);
     index = (index + 1) & 1;
 
-    return abuf[0].add(abuf[1]).multiply(0.5f * (720.0f / 256.0f));
+    a = abuf[0].add(abuf[1]).multiply(0.5f * (720.0f / 256.0f));
+    calibrate();
+}
+
+Vector BMA150::read()
+{
+    return a;
 }
 
 void BMA150::start()
