@@ -20,7 +20,6 @@
 #include "device/AKM8973_2_6_29.hpp"
 #include "device/AKM8973_akmd.hpp"
 #include "device/AKM8973_temperature.hpp"
-#include "device/AKM8973_writer.hpp"
 #include "device/BMA150.hpp"
 
 using namespace akmd;
@@ -44,8 +43,7 @@ void hero_mainloop(int magnetometer_gain, int temperature_zero)
     AKM8973_2_6_29* magnetometer_reader = new AKM8973_2_6_29(magnetometer_gain);
     BMA150* accelerometer_reader = new BMA150();
     ChipReader* temperature_reader = new AKM8973_temperature(magnetometer_reader, temperature_zero);
-    ChipWriter* result_writer = new AKM8973_writer(magnetometer_reader);
-    measurer = new Akmd(magnetometer_reader, accelerometer_reader, temperature_reader, result_writer);
+    measurer = new Akmd(magnetometer_reader, accelerometer_reader, temperature_reader, magnetometer_reader);
 
     while (true) {
         magnetometer_reader->wait_start();
@@ -72,7 +70,6 @@ void hero_mainloop(int magnetometer_gain, int temperature_zero)
     }
 
     delete measurer;
-    delete result_writer;
     delete temperature_reader;
     delete magnetometer_reader;
     delete accelerometer_reader;

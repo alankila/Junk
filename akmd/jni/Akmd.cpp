@@ -26,7 +26,7 @@ static float rad2deg(float v) {
 namespace akmd {
 
 Akmd::Akmd(ChipReader* magnetometer_reader, ChipReader* accelerometer_reader,
-    ChipReader* temperature_reader, ChipWriter* result_writer)
+    ChipReader* temperature_reader, DataPublisher* result_writer)
     : accelerometer(3600), magnetometer(120), earth(0, 0, -256)
 {
     this->magnetometer_reader = magnetometer_reader;
@@ -197,7 +197,7 @@ void Akmd::measure()
     /* Calculate and set data readable on compass input. */
     short final_data[12];
     fill_result_vector(a, m, temperature, final_data);
-    result_writer->write(final_data);
+    result_writer->publish(final_data);
 }
 
 void Akmd::start()

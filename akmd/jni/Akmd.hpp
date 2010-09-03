@@ -5,7 +5,7 @@
 
 #include "Calibrator.hpp"
 #include "device/ChipReader.hpp"
-#include "device/ChipWriter.hpp"
+#include "device/DataPublisher.hpp"
 #include "util.hpp"
 #include "math/Vector.hpp"
 
@@ -26,7 +26,7 @@ class Akmd {
     ChipReader* temperature_reader;
 
     /* Data publishing */
-    ChipWriter* result_writer;
+    DataPublisher* result_writer;
 
     /* Desired start point of next measurement interval. */
     struct timeval next_update;
@@ -40,7 +40,7 @@ class Akmd {
     void fill_result_vector(Vector a, Vector m, short temperature, short* out);
 
     public:
-    Akmd(ChipReader* a, ChipReader* m, ChipReader* t, ChipWriter* r);
+    Akmd(ChipReader* a, ChipReader* m, ChipReader* t, DataPublisher* r);
     ~Akmd();
     void measure();
     void sleep_until_next_update();
