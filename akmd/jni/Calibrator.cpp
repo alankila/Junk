@@ -22,7 +22,7 @@ void Calibrator::reset()
     center = Vector(0, 0, 0);
     scale = Vector(1, 1, 1);
     old_nv = Vector(1, 0, 0);
-    minimum_points_needed = 6;
+    minimum_points_needed = PCR/4;
     idx = 0;
     memset(point_cloud, 0, sizeof(point_cloud));
 }
