@@ -4,7 +4,7 @@
 
 namespace akmd {
 
-#define PCR 64 /* record this number of vectors around the device */
+#define PCR 32 /* record this number of vectors around the device */
 
 typedef struct {
     Vector v;

@@ -83,8 +83,8 @@ bool Calibrator::try_fit(int time)
         }
     }
 
-    /* Less than third of bins filled with recent data? */
-    if (n < PCR/3) {
+    /* Less than required bins filled with recent data? */
+    if (n < PCR/2) {
         return false;
     }
 
