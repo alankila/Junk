@@ -47,6 +47,11 @@ char AKM8973_2_6_29::calibrate_analog_apply()
     }
     
     digital_gain = powf(10.0f, (magnetometer_gain - fixed_magnetometer_gain) * 0.4f / 20.0f) * 16.0f;
+
+    struct timespec interval;
+    interval.tv_sec = 0;
+    interval.tv_nsec = 300000;
+    SUCCEED(nanosleep(&interval, NULL) == 0);
 }
 
 void AKM8973_2_6_29::calibrate_magnetometer_analog_helper(float val, int i)

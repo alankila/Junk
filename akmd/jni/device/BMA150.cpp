@@ -36,7 +36,7 @@ int BMA150::get_delay()
 void BMA150::calibrate()
 {
     const int REFRESH = 10;
-    /* Demanded length to match with the long-term average before the vector
+    /* Demand length to match with the long-term average before the vector
      * is trusted to represent gravity. */
     const float ERROR = 0.05f;
     /* Exponential average applied on acceleration to estimate gravity. */
@@ -49,9 +49,15 @@ void BMA150::calibrate()
     float al = a.length();
     float gl = accelerometer_g.length();
 
-    if (al != 0
-        && gl != 0
-        && fabsf(al - gl) < ERROR) {
+    if (al == 0 || gl == 0) {
+        return;
+    }
+
+    Vector an = a.divide(al);
+    Vector gn = accelerometer_g.divide(gl);
+
+    if (fabsf(al - gl) < ERROR
+        && an.dot(gn) > 1.0f - ERROR) {
 
         /* Going to trust this point. */
         accelerometer.update(next_update.tv_sec, accelerometer_g);

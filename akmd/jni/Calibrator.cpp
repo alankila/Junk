@@ -123,9 +123,14 @@ bool Calibrator::try_fit(int time)
     }
 
     float *x = Matrix::leastSquares(&a, &b);
-    center = Vector(x[0], x[2] / x[1], x[4] / x[3]);
-    scale = Vector(1, sqrtf(x[1]), sqrtf(x[3]));
-    delete[] x;
+    if (x != NULL) {
+        /* Do a little smell test on the values. */
+        if (x[1] > 0.5f && x[1] < 2.0f && x[3] > 0.5f && x[3] < 2.0f) {
+            center = Vector(x[0], x[2] / x[1], x[4] / x[3]);
+            scale = Vector(1, sqrtf(x[1]), sqrtf(x[3]));
+        }
+        delete[] x;
+    }
 
     return true;
 }
