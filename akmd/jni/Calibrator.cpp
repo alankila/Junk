@@ -7,6 +7,7 @@
 
 #include "Calibrator.hpp"
 #include "math/Matrix.hpp"
+#include "util.hpp"
 
 namespace akmd {    
 
@@ -33,7 +34,7 @@ Calibrator::~Calibrator()
 
 void Calibrator::update(int time, Vector v)
 {
-    const float SIMILARITY = 0.9f; /* 25 degrees deviation, 14 vectors per circle */
+    const float SIMILARITY = 0.8f; /* 36 degrees' deviation, 10 vectors per circle */
 
     float vl = v.length();
     if (vl == 0.0f) {
@@ -67,6 +68,7 @@ void Calibrator::update(int time, Vector v)
             idx = i;
             break;
         }
+        
     }
 
     point_cloud[idx].time = time;

@@ -6,8 +6,6 @@
 #include <math.h>
 #include "math/Matrix.hpp"
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "akmd.free", __VA_ARGS__)
-
 namespace akmd {
 
 using namespace std;

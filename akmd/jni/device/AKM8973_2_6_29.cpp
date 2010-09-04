@@ -9,7 +9,7 @@
 namespace akmd {
 
 AKM8973_2_6_29::AKM8973_2_6_29(int gain)
-    : index(0), fixed_magnetometer_gain(15), magnetometer(120)
+    : index(0), fixed_magnetometer_gain(15), magnetometer(600)
 {
     mbuf[0] = mbuf[1] = Vector();
 
