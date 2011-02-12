@@ -24,13 +24,12 @@ const int MAPITERATIONS = 8;
 const int RAYITERATIONS = 128;
 /* The heightmap level that marks water. */
 const float WATER_LEVEL = 0.25;
-/* When estimating safe distance for ray marching, scale distance to current scenery point by this value.
- * By testing, 0.2 seems safe, but costs more CPU; small errors are automatically corrected during the raymarching. */
-const float MARCH_SPEED = 0.4;
+/* When estimating safe distance for ray marching, scale distance to current scenery point by this value. There's probably no analytic expression for this. */
+const float MARCH_SPEED = 0.5;
 /* When ray reaches close enough to terrain, stop marching */
 const float STOPCONDITION = 0.005;
 /* Render distance. */
-const float FOG = 3.;
+const float FOG = 4.;
 /* Direction to infinitely far-away Sun */
 const vec3 SUN = vec3(0.707, 0., 0.707);
 /* The camera up direction. */
@@ -71,8 +70,7 @@ vec3 interpolatedNoise(in vec2 pos) {
     );
 }
 
-/* FIXME: convert to texture lookup. */
-float getHeight(in vec2 pos) {
+float getHeight(in vec2 pos, in int maxLevel) {
     float o = 0.;
     float w = 0.5;
     float dx = 0.;
@@ -83,14 +81,16 @@ float getHeight(in vec2 pos) {
         dx += n.y;
         dy += n.z;
         o += w * n.x / (1. + dx * dx + dy * dy);
+        if (i >= maxLevel) {
+            break;
+        }
         w *= .5;
         pos *= 2.;
     }
     return o;
 }
 
-/* FIXME: convert to texture lookup. */
-vec3 getHeightDerivate(in vec2 pos) {
+vec3 getHeightDerivate(in vec2 pos, in int maxLevel) {
     vec2 d = vec2(0., 0.);
     float w = 0.5;
     float dx = 0.;
@@ -101,16 +101,13 @@ vec3 getHeightDerivate(in vec2 pos) {
         dx += n.y;
         dy += n.z;
         d += n.yz * w / (1. + dx * dx + dy * dy);
+        if (i >= maxLevel) {
+            break;
+        }
         w *= .5;
         pos *= 2.;
     }
     return vec3(d, 1.0 - sqrt(d.x * d.x + d.y * d.y));
-}
-
-float getCoarseHeight(in vec2 pos) {
-    /* Modified Perlin noise according to Inigo Quilez. */
-    vec3 n = interpolatedNoise(pos);
-    return 0.5 * n.x / (1. + n.y * n.y + n.z * n.z);
 }
 
 vec3 intersectWater(in vec3 pos, in vec3 dir, in float shallowness) {
@@ -123,43 +120,41 @@ vec3 intersectWater(in vec3 pos, in vec3 dir, in float shallowness) {
         + pow(clamp(dot(normalize(waterReflection), SUN), 0., 1.), 8.) * vec3(1., 1., 1.);
 }
 
-vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float distance) {
+vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float t) {
     vec3 terrain = vec3(0., 0., 0.);
 
-    float t = 0.0;
+    /* Dynamic LOD during marching:
+     * After distance to scene has been acquired, update LOD. */
+    t = 0.1;
+    int maxLevel = MAPITERATIONS;
     for (int i = 0; i < RAYITERATIONS; i ++) {
-        /* Find height of the point under ray. */
-        float groundHeight = getHeight(pos.xy);
+        float groundHeight = getHeight(pos.xy, maxLevel);
         float height = groundHeight < 0.24 ? 0.24 : groundHeight;
         float dz = pos.z - height;
 
-        /* Convert distance between ray and terrain to march step. 
-         * This formulation is a bit crafty: if the estimate oversteps,
-         * it will backtrack automatically. */
         float safeDist = dz * MARCH_SPEED;
         t += safeDist;
         pos += safeDist * dir;
-
+        maxLevel = int(1.0 / (abs(dz) * t));
+        
         /* Are we close enough to terrain? */
-        if (abs(dz) < t*STOPCONDITION) {
-            /* Estimate ambient occlusion. Note that this is
-             * a very poor estimate, but it helps to bring out
-             * surface detail anyway. */
+        if (abs(dz) < STOPCONDITION * t) {
             float ao = 1. - float(i) / float(RAYITERATIONS);
 
             /* Get surface normal. */
-            vec3 d = getHeightDerivate(pos.xy);
+            vec3 d = getHeightDerivate(pos.xy, maxLevel);
             float diffuse = smoothstep(0.3, 0.7, dot(d, SUN));
 
             float waterBlend = smoothstep(0.24, 0.25, height);
+
+            /* Decide on color to draw with.
+             * This should probably be a texture lookup. */
+            float beachOrGreen = smoothstep(0.25, 0.27, height);
 
             /* Adjust foliage levels by terrain tilt. */
             float tilt = dot(d.xy, d.xy);
             height += tilt * 3.;
 
-            /* Decide on color to draw with.
-             * This should probably be a texture lookup. */
-            float beachOrGreen = smoothstep(0.27, 0.28, height);
             float greenOrBarren = smoothstep(0.56, 0.60, height);
             float barrenOrSnow = smoothstep(0.66, 0.68, height);
 
@@ -167,7 +162,7 @@ vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float distance) {
             terrain = mix(terrain, vec3(0.4, 0.1, 0.1) * getNoise(pos.x, pos.y), greenOrBarren);
             terrain = mix(terrain, vec3(1.0, 1.0, 1.0), barrenOrSnow);
             /* Apply lighting for objects above surface. */
-            terrain *= ao * diffuse;
+            terrain *= diffuse * ao;
 
             /* Blend water if under water level. */
             vec3 water = intersectWater(pos, dir, pos.z - groundHeight);
@@ -180,7 +175,6 @@ vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float distance) {
         }
     }
 
-    distance = t / FOG;
     return terrain;
 }
 
@@ -198,17 +192,18 @@ void main(void) {
     vec3 left = normalize(cross(UP, uDir));
     vec3 up = cross(uDir, left);
 
-    vec3 pos = vec3(uPos.xy, getCoarseHeight(uPos.xy) + 0.5);
+    vec3 pos = vec3(uPos.xy, getHeight(uPos.xy, 1) + 0.25);
     vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+    dir = normalize(dir);
 
     float distance;
     vec3 terrain = intersectTerrain(pos, dir, distance);
 
-    float sunAngle = pow(clamp(dot(normalize(dir), SUN), 0., 1.), 8.);
+    float sunAngle = pow(clamp(dot(dir, SUN), 0., 1.), 8.);
     float skyBrightness = clamp(1.-dir.z, 0., 1.);
     vec3 sky = vec3(skyBrightness, skyBrightness, 1.) * .8 + vec3(1., 1., 1.) * sunAngle;
 
-    gl_FragColor = vec4(sqrt(mix(terrain, sky, distance)), 1.);
+    gl_FragColor = vec4(sqrt(mix(terrain, sky, distance/FOG)), 1.);
 }
 </script> 
 
