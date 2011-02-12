@@ -110,9 +110,9 @@ vec3 getHeightDerivate(in vec2 pos, in int maxLevel) {
 
 vec3 intersectWater(in vec3 pos, in vec3 dir, in float shallowness) {
     vec3 waterReflection = vec3(dir.x, dir.y, -dir.z)
-        + texture2D(uWatermap, pos.xy * 4. + vec2(uTime *.07, 0.)).xyz
-        * texture2D(uWatermap, pos.xy * 4. + vec2(0., uTime *.11)).xyz
-        / (STOPCONDITION + shallowness) * .1;
+        + (texture2D(uWatermap, pos.xy * 4. + vec2(uTime *.07, 0.)).xyz
+           * texture2D(uWatermap, pos.xy * 4. + vec2(0., uTime *.11)).xyz
+	   - 0.25) / (STOPCONDITION + shallowness) * .1;
 
     return vec3(0.2, 0.2, 0.7)
         + pow(clamp(dot(normalize(waterReflection), SUN), 0., 1.), 8.) * vec3(1., 1., 1.);
