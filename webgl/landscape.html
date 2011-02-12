@@ -145,22 +145,17 @@ vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float t) {
 
 	    /* Grass -- if terrain is not flat, the beach is shorter */
             float beachOrGrass = smoothstep(0.26, 0.28, height + d.z*.01);
-            vec3 grass = vec3(0.125, 0.25, 0.0);
-
-	    /* Trees */
-	    //vec3 treenormal = normalize(vec3(sin(pos.x * 800. + height * 100.), cos(pos.y * 800.), 1.0));
-	    //grass += vec3(0.0, 0.1, 0.0) * max(0., dot(treenormal, SUN));
-
+            vec3 grass = vec3(0.125, 0.3 - height * 0.3, 0.0);
             terrain = mix(terrain,
 			  grass,
                           beachOrGrass);
 
 	    /* Rock */
-	    float greenOrBarren = smoothstep(0.45, 0.55, height * 3. - d.z);
+	    float greenOrBarren = smoothstep(-0.5, -0.48, height - d.z);
             terrain = mix(terrain, vec3(0.4, 0.45, 0.5) * getInterpolatedNoise(pos.xy * 512.).x, greenOrBarren);
             
 	    /* Snow -- height increased if terrain is not flat. */
-	    float barrenOrSnow = smoothstep(0.66, 0.68, height + d.z - 1.);
+	    float barrenOrSnow = smoothstep(1.6, 1.63, height + d.z);
             terrain = mix(terrain, vec3(1.0, 1.0, 1.0), barrenOrSnow);
 
             /* Apply lighting for objects above surface. */
