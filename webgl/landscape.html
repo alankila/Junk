@@ -1,0 +1,260 @@
+<html><head><title>Landscape rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* System's clock, for running animations. */
+uniform float uTime;
+/* Position of camera. */
+uniform vec3 uPos;
+/* Lookat of camera. */
+uniform vec3 uDir;
+/* Water texture */
+uniform sampler2D uWatermap;
+/* Noise texture */
+uniform sampler2D uNoise;
+
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+
+/* How far to subdivide modified Perlin noise.
+ * (Determines how coarse the terrain is.) */
+const int MAPITERATIONS = 8;
+/* How many march iterations per ray. */
+const int RAYITERATIONS = 128;
+/* The heightmap level that marks water. */
+const float WATER_LEVEL = 0.25;
+/* When estimating safe distance for ray marching, scale distance to current scenery point by this value.
+ * By testing, 0.2 seems safe, but costs more CPU; small errors are automatically corrected during the raymarching. */
+const float MARCH_SPEED = 0.4;
+/* When ray reaches close enough to terrain, stop marching */
+const float STOPCONDITION = 0.005;
+/* Render distance. */
+const float FOG = 3.;
+/* Direction to infinitely far-away Sun */
+const vec3 SUN = vec3(0.707, 0., 0.707);
+/* The camera up direction. */
+const vec3 UP = vec3(0., 0., 1.);
+
+float getNoise(in float x, in float y) {
+    return texture2D(uNoise, vec2(x, y)).r;
+}
+
+/* This gives quintic-interpolated noise from 2d coordinates.
+ * Derivation by Inigo Quilez. */
+vec3 interpolatedNoise(in vec2 pos) {
+    float i = floor(pos.x) / 256.;
+    float j = floor(pos.y) / 256.;
+    float u = fract(pos.x);
+    float v = fract(pos.y);
+
+    float du = 30.0*u*u*(u*(u-2.0)+1.0);
+    float dv = 30.0*v*v*(v*(v-2.0)+1.0);
+
+    u = u*u*u*(u*(u*6.0-15.0)+10.0);
+    v = v*v*v*(v*(v*6.0-15.0)+10.0);
+
+    float a = getNoise(i, j);
+    float b = getNoise(i+1./256., j);
+    float c = getNoise(i, j+1./256.);
+    float d = getNoise(i+1./256., j+1./256.);
+
+    float k0 = a;
+    float k1 = b - a;
+    float k2 = c - a;
+    float k3 = a - b - c + d;
+
+    return vec3(
+        k0 + k1*u + k2*v + k3*u*v,
+        -du * (k1 + k3*v),
+        -dv * (k2 + k3*u)
+    );
+}
+
+/* FIXME: convert to texture lookup. */
+float getHeight(in vec2 pos) {
+    float o = 0.;
+    float w = 0.5;
+    float dx = 0.;
+    float dy = 0.;
+    for (int i = 0; i < MAPITERATIONS; i ++) {
+        /* Modified Perlin noise according to Inigo Quilez. */
+        vec3 n = interpolatedNoise(pos);
+        dx += n.y;
+        dy += n.z;
+        o += w * n.x / (1. + dx * dx + dy * dy);
+        w *= .5;
+        pos *= 2.;
+    }
+    return o;
+}
+
+/* FIXME: convert to texture lookup. */
+vec3 getHeightDerivate(in vec2 pos) {
+    vec2 d = vec2(0., 0.);
+    float w = 0.5;
+    float dx = 0.;
+    float dy = 0.;
+    for (int i = 0; i < MAPITERATIONS; i ++) {
+        /* Modified Perlin noise according to Inigo Quilez. */
+        vec3 n = interpolatedNoise(pos);
+        dx += n.y;
+        dy += n.z;
+        d += n.yz * w / (1. + dx * dx + dy * dy);
+        w *= .5;
+        pos *= 2.;
+    }
+    return vec3(d, 1.0 - sqrt(d.x * d.x + d.y * d.y));
+}
+
+float getCoarseHeight(in vec2 pos) {
+    /* Modified Perlin noise according to Inigo Quilez. */
+    vec3 n = interpolatedNoise(pos);
+    return 0.5 * n.x / (1. + n.y * n.y + n.z * n.z);
+}
+
+vec3 intersectWater(in vec3 pos, in vec3 dir, in float shallowness) {
+    vec3 waterReflection = vec3(dir.x, dir.y, -dir.z)
+        + texture2D(uWatermap, pos.xy * 4. + vec2(uTime *.07, 0.)).xyz
+        * texture2D(uWatermap, pos.xy * 4. + vec2(0., uTime *.11)).xyz
+        / (STOPCONDITION + shallowness) * .1;
+
+    return vec3(0.2, 0.2, 0.7)
+        + pow(clamp(dot(normalize(waterReflection), SUN), 0., 1.), 8.) * vec3(1., 1., 1.);
+}
+
+vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float distance) {
+    vec3 terrain = vec3(0., 0., 0.);
+
+    float t = 0.0;
+    for (int i = 0; i < RAYITERATIONS; i ++) {
+        /* Find height of the point under ray. */
+        float groundHeight = getHeight(pos.xy);
+        float height = groundHeight < 0.24 ? 0.24 : groundHeight;
+        float dz = pos.z - height;
+
+        /* Convert distance between ray and terrain to march step. 
+         * This formulation is a bit crafty: if the estimate oversteps,
+         * it will backtrack automatically. */
+        float safeDist = dz * MARCH_SPEED;
+        t += safeDist;
+        pos += safeDist * dir;
+
+        /* Are we close enough to terrain? */
+        if (abs(dz) < t*STOPCONDITION) {
+            /* Estimate ambient occlusion. Note that this is
+             * a very poor estimate, but it helps to bring out
+             * surface detail anyway. */
+            float ao = 1. - float(i) / float(RAYITERATIONS);
+
+            /* Get surface normal. */
+            vec3 d = getHeightDerivate(pos.xy);
+            float diffuse = smoothstep(0.3, 0.7, dot(d, SUN));
+
+            float waterBlend = smoothstep(0.24, 0.25, height);
+
+            /* Adjust foliage levels by terrain tilt. */
+            float tilt = dot(d.xy, d.xy);
+            height += tilt * 3.;
+
+            /* Decide on color to draw with.
+             * This should probably be a texture lookup. */
+            float beachOrGreen = smoothstep(0.27, 0.28, height);
+            float greenOrBarren = smoothstep(0.56, 0.60, height);
+            float barrenOrSnow = smoothstep(0.66, 0.68, height);
+
+            terrain = mix(vec3(0.9, 0.9, 0.7), vec3(0.2, 0.4, 0.2), beachOrGreen);
+            terrain = mix(terrain, vec3(0.4, 0.1, 0.1) * getNoise(pos.x, pos.y), greenOrBarren);
+            terrain = mix(terrain, vec3(1.0, 1.0, 1.0), barrenOrSnow);
+            /* Apply lighting for objects above surface. */
+            terrain *= ao * diffuse;
+
+            /* Blend water if under water level. */
+            vec3 water = intersectWater(pos, dir, pos.z - groundHeight);
+            terrain = mix(water, terrain, waterBlend);
+            break;
+        }
+        if (t > FOG) {
+            t = FOG;
+            break;
+        }
+    }
+
+    distance = t / FOG;
+    return terrain;
+}
+
+/* Cross product. */
+vec3 cross(in vec3 a, in vec3 b) {
+    return vec3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    );
+}
+
+void main(void) {
+    /* Calculate an orthonormal base for rendering. */
+    vec3 left = normalize(cross(UP, uDir));
+    vec3 up = cross(uDir, left);
+
+    vec3 pos = vec3(uPos.xy, getCoarseHeight(uPos.xy) + 0.5);
+    vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+
+    float distance;
+    vec3 terrain = intersectTerrain(pos, dir, distance);
+
+    float sunAngle = pow(clamp(dot(normalize(dir), SUN), 0., 1.), 8.);
+    float skyBrightness = clamp(1.-dir.z, 0., 1.);
+    vec3 sky = vec3(skyBrightness, skyBrightness, 1.) * .8 + vec3(1., 1., 1.) * sunAngle;
+
+    gl_FragColor = vec4(sqrt(mix(terrain, sky, distance)), 1.);
+}
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+function effectInit(gl, shader) {
+    var texturesToLoad = 2;
+    var textureWater;
+    var textureNoise;
+
+    var textureLoaded = function() {
+        if (-- texturesToLoad != 0) {
+            return;
+        }
+        /* Bind the water map to texture unit 0. */
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, textureWater);
+        gl.uniform1i(gl.getUniformLocation(shader, "uWatermap"), 0);
+            
+        /* Bind the noise texture to texture unit 1. */
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, textureNoise);
+        gl.uniform1i(gl.getUniformLocation(shader, "uNoise"), 1);
+
+        effectStart(gl, shader);
+    };
+
+    textureWater = loadTexture(gl, "watermap.jpg", textureLoaded);
+    textureNoise = loadTexture(gl, "noise.png", textureLoaded);
+}
+</script>
+</head>
+<body>
+
+<canvas id="canvas" width="512" height="512"></canvas>
+
+</body>
+</html>

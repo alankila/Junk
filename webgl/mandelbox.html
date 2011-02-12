@@ -1,0 +1,171 @@
+<html><head><title>Mandelbox rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* System's clock, for running animations. */
+uniform float uTime;
+/* Position of camera. */
+uniform vec3 uPos;
+/* Lookat of camera. */
+uniform vec3 uDir;
+
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+
+const vec3 LIGHT = vec3(0.707, 0.707, 0.);
+const vec3 UP = vec3(0.0, 0.0, 1.0);
+const float SCALE = -3.;
+const int ITERATIONS = 10;
+const int RAYITERATIONS = 128;
+const float DETAIL = 0.003;
+
+/* Cross product. */
+vec3 cross(in vec3 a, in vec3 b) {
+    return vec3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    );
+}
+
+float mandelboxColor(in vec3 pos) {
+    vec3 iter = pos;
+
+    float coloringType = 0.;
+    for (int i = 0; i < ITERATIONS; i ++) {
+	iter = clamp(iter, -1., 1.) * 2. - iter;
+	float mf = clamp(dot(iter, iter), 0.25, 1.0);
+	coloringType += mf;
+	iter = iter/mf * SCALE + pos;
+    }
+
+    return coloringType / float(ITERATIONS);
+}
+
+float mandelboxDistance(in vec3 pos) {
+    vec3 iter = pos;
+    float DEfactor = SCALE;
+
+    for (int i = 0; i < ITERATIONS; i ++) {
+	iter = clamp(iter, -1., 1.) * 2. - iter;
+	float mf = SCALE / clamp(dot(iter, iter), 0.25, 1.0);
+	iter = iter * mf + pos;
+	DEfactor *= mf;
+    }
+
+    return sqrt(dot(iter, iter)) / abs(DEfactor);
+}
+
+vec3 intersectMandelbox(inout vec3 pos, in vec3 dir, out float t, out int iterations)
+{
+    t = 0.;
+    for (int j = 0; j < RAYITERATIONS; j ++) {
+        if (abs(pos.x) > 8. || abs(pos.y) > 8. || abs(pos.z) > 8.) {
+            pos += dir * .5;
+            continue;
+        }
+
+	float distance = mandelboxDistance(pos);
+
+        pos += distance * dir;
+	t += distance;
+	float dt = DETAIL * t;
+        if (distance < dt) {
+	    t /= 10.;
+	    iterations = j;
+	    return pos;
+	}
+
+	if (t > 10.) {
+	    break;
+	}
+    }
+
+    iterations = RAYITERATIONS;
+    t = 1.;
+    return vec3(0., 0., 0.);
+}
+
+vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
+    int ao;
+    intersectMandelbox(pos, dir, t, ao);
+    if (t != 1.) {
+	float color = mandelboxColor(pos);
+
+	float dt = DETAIL * t;
+	float distance = mandelboxDistance(pos);
+	float dx = mandelboxDistance(pos + vec3(dt, 0., 0.));
+	float dy = mandelboxDistance(pos + vec3(0., dt, 0.));
+	float dz = mandelboxDistance(pos + vec3(0., 0., dt));
+
+	vec3 norm = normalize(vec3(dx - distance, dy - distance, dz - distance) / dt);
+	float diffuse = clamp(dot(LIGHT, norm), 0., 1.);
+
+	vec3 refl = 2. * norm * dot(LIGHT, norm) - LIGHT;
+	float specular = clamp(dot(-refl, normalize(dir)), 0., 1.);
+	
+	float lightDistance;
+	int lightAo;
+	pos += LIGHT * dt;
+	intersectMandelbox(pos, LIGHT, lightDistance, lightAo);
+
+	float curveLike = pow(color, 6.);
+	float boxLike = 1. - curveLike;
+
+	diffuse *= 1. - float(ao) / float(RAYITERATIONS);
+
+	return
+	    vec3(.0, .0, .01)
+
+	    + vec3(
+		1. - boxLike,
+		1. - max(curveLike, boxLike),
+		1. - curveLike
+	    ) * diffuse * lightDistance
+
+	    + vec3(.5, .5, .5) * pow(specular, 10.) * lightDistance;
+    }
+    
+    return vec3(0., 0., 0.);
+}
+
+void main(void) {
+    /* Calculate an orthonormal base for rendering. */
+    vec3 left = normalize(cross(UP, uDir));
+    vec3 up = cross(uDir, left);
+
+    vec3 pos = vec3(0., 6., 0.) + uPos;
+    vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+
+    float distance;
+    vec3 color = getMandelboxColor(pos, dir, distance);
+    vec3 space = dir * .1 + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 1.0, dot(normalize(dir), LIGHT));
+    gl_FragColor = vec4(sqrt(mix(color, space, distance)), 1.);
+}
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+function effectInit(gl, shader) {
+    effectStart(gl, shader);
+}
+</script>
+</head>
+<body>
+
+<canvas id="canvas" width="512" height="512"></canvas>
+
+</body>
+</html>
