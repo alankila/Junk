@@ -225,28 +225,30 @@ void main(void) {
 <script type="text/javascript">
 function effectInit(gl, shader) {
     var texturesToLoad = 2;
-    var textureWater;
     var textureNoise;
+    var textureWater;
 
     var textureLoaded = function() {
         if (-- texturesToLoad != 0) {
             return;
         }
-        /* Bind the water map to texture unit 0. */
+        /* Bind the noise texture to texture unit 0. */
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, textureWater);
-        gl.uniform1i(gl.getUniformLocation(shader, "uWatermap"), 0);
-            
-        /* Bind the noise texture to texture unit 1. */
-        gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, textureNoise);
-        gl.uniform1i(gl.getUniformLocation(shader, "uNoise"), 1);
+        gl.uniform1i(gl.getUniformLocation(shader, "uNoise"), 0);
+
+        /* Bind the water map to texture unit 1.
+	 * If this doesn't work for some reason, we only
+	 * lose water waves... */
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, textureWater);
+        gl.uniform1i(gl.getUniformLocation(shader, "uWatermap"), 1);
 
         effectStart(gl, shader);
     };
 
-    textureWater = loadTexture(gl, "watermap.jpg", textureLoaded);
     textureNoise = loadTexture(gl, "noise.png", textureLoaded);
+    textureWater = loadTexture(gl, "watermap.jpg", textureLoaded);
 }
 </script>
 </head>
