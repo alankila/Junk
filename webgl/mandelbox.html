@@ -16,9 +16,9 @@ varying vec2 vPosition;
 const vec3 LIGHT = vec3(0.707, 0.707, 0.);
 const vec3 UP = vec3(0.0, 0.0, 1.0);
 const float SCALE = -3.;
-const int ITERATIONS = 10;
+const int ITERATIONS = 11;
 const int RAYITERATIONS = 128;
-const float DETAIL = 0.003;
+const float DETAIL = 0.0025;
 
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
@@ -93,7 +93,7 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
     if (t != 1.) {
 	/* Estimate material type. */
 	float curveLike = mandelboxColor(pos);
-	curveLike = pow(curveLike, 8.);
+	curveLike = pow(curveLike, 10.);
 	float boxLike = 1. - curveLike;
 	float metallicness = boxLike * curveLike * 4.;
 
@@ -109,7 +109,7 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
 	float diffuse = max(dot(LIGHT, norm), 0.)
 	    * (1. - float(ao) / float(RAYITERATIONS));
 	vec3 refl = 2. * norm * dot(LIGHT, norm) - LIGHT;
-	float specular = max(dot(-refl, dir), 0.);
+	float specular = max(-dot(refl, dir), 0.);
 
 	/* Calculate shadow. */	
 	float lightDistance;
@@ -164,6 +164,7 @@ function effectInit(gl, shader) {
 </head>
 <body>
 
+<h1>Goodbye to the Borg (scale -3 Mandelbox)</h1>
 <canvas id="canvas" width="512" height="512"></canvas>
 
 </body>
