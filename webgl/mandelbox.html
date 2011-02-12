@@ -91,40 +91,38 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
     int ao;
     intersectMandelbox(pos, dir, t, ao);
     if (t != 1.) {
-	float color = mandelboxColor(pos);
+	/* Estimate material type. */
+	float curveLike = mandelboxColor(pos);
+	curveLike = pow(curveLike, 8.);
+	float boxLike = 1. - curveLike;
+	float metallicness = boxLike * curveLike * 4.;
 
+	/* Calculate normal. */
 	float dt = DETAIL * t;
 	float distance = mandelboxDistance(pos);
 	float dx = mandelboxDistance(pos + vec3(dt, 0., 0.));
 	float dy = mandelboxDistance(pos + vec3(0., dt, 0.));
 	float dz = mandelboxDistance(pos + vec3(0., 0., dt));
-
 	vec3 norm = normalize(vec3(dx - distance, dy - distance, dz - distance) / dt);
-	float diffuse = clamp(dot(LIGHT, norm), 0., 1.);
 
+	/* Calculate diffuse and specular terms. */
+	float diffuse = max(dot(LIGHT, norm), 0.)
+	    * (1. - float(ao) / float(RAYITERATIONS));
 	vec3 refl = 2. * norm * dot(LIGHT, norm) - LIGHT;
-	float specular = clamp(dot(-refl, normalize(dir)), 0., 1.);
-	
+	float specular = max(dot(-refl, dir), 0.);
+
+	/* Calculate shadow. */	
 	float lightDistance;
 	int lightAo;
 	pos += LIGHT * dt;
 	intersectMandelbox(pos, LIGHT, lightDistance, lightAo);
 
-	float curveLike = pow(color, 6.);
-	float boxLike = 1. - curveLike;
-
-	diffuse *= 1. - float(ao) / float(RAYITERATIONS);
-
 	return
-	    vec3(.0, .0, .01)
+	    vec3(1. - boxLike, 1. - max(curveLike, boxLike), 1. - curveLike)
+	      * diffuse * lightDistance
 
-	    + vec3(
-		1. - boxLike,
-		1. - max(curveLike, boxLike),
-		1. - curveLike
-	    ) * diffuse * lightDistance
-
-	    + vec3(.5, .5, .5) * pow(specular, 10.) * lightDistance;
+	    + vec3(1., 1., 1.) * metallicness
+	      * pow(specular, 1. + 50. * metallicness) * lightDistance;
     }
     
     return vec3(0., 0., 0.);
@@ -135,12 +133,13 @@ void main(void) {
     vec3 left = normalize(cross(UP, uDir));
     vec3 up = cross(uDir, left);
 
-    vec3 pos = vec3(0., 6., 0.) + uPos;
+    vec3 pos = vec3(0., 5., 0.) + uPos;
     vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+    dir = normalize(dir);
 
     float distance;
     vec3 color = getMandelboxColor(pos, dir, distance);
-    vec3 space = dir * .1 + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 1.0, dot(normalize(dir), LIGHT));
+    vec3 space = dir * .1 + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 1.0, dot(dir, LIGHT));
     gl_FragColor = vec4(sqrt(mix(color, space, distance)), 1.);
 }
 </script> 
