@@ -27,7 +27,7 @@ const float WATER_LEVEL = 0.25;
 /* When estimating safe distance for ray marching, scale distance to current scenery point by this value. There's probably no analytic expression for this. */
 const float MARCH_SPEED = 0.5;
 /* Level Of Detail: how rapidly terrain loses features at distance. */
-const float LOD = 0.7;
+const float LOD = 0.8;
 /* When ray reaches close enough to terrain, stop marching */
 const float STOPCONDITION = 0.004;
 /* Render distance. */
@@ -155,10 +155,12 @@ vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float t) {
 
             /* Adjust foliage/snow levels by terrain tilt. */
             float tilt = dot(d.xy, d.xy);
-            float greenOrBarren = smoothstep(0.58, 0.60, height + tilt * 3.);
+            float greenOrBarren = smoothstep(0.59, 0.60, height + tilt * 3.);
             float barrenOrSnow = smoothstep(0.66, 0.68, height - tilt * 6.);
 
-            terrain = mix(vec3(0.9, 0.9, 0.7), vec3(0.2, 0.4, 0.2), beachOrGreen);
+            terrain = mix(vec3(0.9, 0.9, 0.7),
+                          vec3(0.4, 0.8, 0.4) * (.5 + tilt * 2.),
+                          beachOrGreen);
             terrain = mix(terrain, vec3(0.4, 0.1, 0.1) * getInterpolatedNoise(pos.xy * 512.).x, greenOrBarren);
             terrain = mix(terrain, vec3(1.0, 1.0, 1.0), barrenOrSnow);
 
