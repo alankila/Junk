@@ -26,8 +26,10 @@ const int RAYITERATIONS = 128;
 const float WATER_LEVEL = 0.25;
 /* When estimating safe distance for ray marching, scale distance to current scenery point by this value. There's probably no analytic expression for this. */
 const float MARCH_SPEED = 0.5;
+/* Level Of Detail: how rapidly terrain loses features at distance. */
+const float LOD = 0.7;
 /* When ray reaches close enough to terrain, stop marching */
-const float STOPCONDITION = 0.005;
+const float STOPCONDITION = 0.004;
 /* Render distance. */
 const float FOG = 4.;
 /* Direction to infinitely far-away Sun */
@@ -41,7 +43,7 @@ float getNoise(in float x, in float y) {
 
 /* This gives quintic-interpolated noise from 2d coordinates.
  * Derivation by Inigo Quilez. */
-vec3 interpolatedNoise(in vec2 pos) {
+vec3 getInterpolatedNoise(in vec2 pos) {
     float i = floor(pos.x) / 256.;
     float j = floor(pos.y) / 256.;
     float u = fract(pos.x);
@@ -77,7 +79,7 @@ float getHeight(in vec2 pos, in int maxLevel) {
     float dy = 0.;
     for (int i = 0; i < MAPITERATIONS; i ++) {
         /* Modified Perlin noise according to Inigo Quilez. */
-        vec3 n = interpolatedNoise(pos);
+        vec3 n = getInterpolatedNoise(pos);
         dx += n.y;
         dy += n.z;
         o += w * n.x / (1. + dx * dx + dy * dy);
@@ -97,7 +99,7 @@ vec3 getHeightDerivate(in vec2 pos, in int maxLevel) {
     float dy = 0.;
     for (int i = 0; i < MAPITERATIONS; i ++) {
         /* Modified Perlin noise according to Inigo Quilez. */
-        vec3 n = interpolatedNoise(pos);
+        vec3 n = getInterpolatedNoise(pos);
         dx += n.y;
         dy += n.z;
         d += n.yz * w / (1. + dx * dx + dy * dy);
@@ -125,8 +127,8 @@ vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float t) {
 
     /* Dynamic LOD during marching:
      * After distance to scene has been acquired, update LOD. */
-    t = 0.1;
-    int maxLevel = MAPITERATIONS;
+    t = 0.0;
+    int maxLevel = MAPITERATIONS/2;
     for (int i = 0; i < RAYITERATIONS; i ++) {
         float groundHeight = getHeight(pos.xy, maxLevel);
         float height = groundHeight < 0.24 ? 0.24 : groundHeight;
@@ -135,7 +137,7 @@ vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float t) {
         float safeDist = dz * MARCH_SPEED;
         t += safeDist;
         pos += safeDist * dir;
-        maxLevel = int(1.0 / (abs(dz) * t));
+        maxLevel = int(LOD / (abs(dz) * t));
         
         /* Are we close enough to terrain? */
         if (abs(dz) < STOPCONDITION * t) {
@@ -151,16 +153,15 @@ vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float t) {
              * This should probably be a texture lookup. */
             float beachOrGreen = smoothstep(0.25, 0.27, height);
 
-            /* Adjust foliage levels by terrain tilt. */
+            /* Adjust foliage/snow levels by terrain tilt. */
             float tilt = dot(d.xy, d.xy);
-            height += tilt * 3.;
-
-            float greenOrBarren = smoothstep(0.56, 0.60, height);
-            float barrenOrSnow = smoothstep(0.66, 0.68, height);
+            float greenOrBarren = smoothstep(0.58, 0.60, height + tilt * 3.);
+            float barrenOrSnow = smoothstep(0.66, 0.68, height - tilt * 6.);
 
             terrain = mix(vec3(0.9, 0.9, 0.7), vec3(0.2, 0.4, 0.2), beachOrGreen);
-            terrain = mix(terrain, vec3(0.4, 0.1, 0.1) * getNoise(pos.x, pos.y), greenOrBarren);
+            terrain = mix(terrain, vec3(0.4, 0.1, 0.1) * getInterpolatedNoise(pos.xy * 512.).x, greenOrBarren);
             terrain = mix(terrain, vec3(1.0, 1.0, 1.0), barrenOrSnow);
+
             /* Apply lighting for objects above surface. */
             terrain *= diffuse * ao;
 
