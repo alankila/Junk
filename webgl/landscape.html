@@ -22,25 +22,25 @@ varying vec2 vPosition;
 const int MAPITERATIONS = 8;
 /* How many march iterations per ray. */
 const int RAYITERATIONS = 256;
-/* When estimating safe distance for ray marching, scale distance to current scenery point by this value. There's probably no analytic expression for this. */
-const float MARCH_SPEED = 0.4;
-/* Level Of Detail: how rapidly terrain loses features at distance. */
-const float LOD = 1.0;
+/* Convert distance between ray and terrain position to "safe" advancing step. */
+const float MARCH_SPEED = 0.35;
+/* Level Of Detail: how far to render until dropping terrain features. */
+const float LOD = 2.0;
 /* When ray reaches close enough to terrain, stop marching */
 const float STOPCONDITION = 0.0025;
 /* Render distance. */
 const float FOG = 4.;
 /* Direction to infinitely far-away Sun */
-const vec3 SUN = vec3(0.707, 0., 0.707);
+const vec3 SUN = vec3(0.8, 0., 0.5);
 /* The camera up direction. */
 const vec3 UP = vec3(0., 0., 1.);
 
+/* Substitute with white noise generator. */
 float getNoise(in float x, in float y) {
     return texture2D(uNoise, vec2(x, y)).b;
 }
 
-/* This gives quintic-interpolated noise from 2d coordinates.
- * Derivation by Inigo Quilez. */
+/* Derivation by Inigo Quilez. */
 vec3 getInterpolatedNoise(in vec2 pos) {
     float i = floor(pos.x) / 256.;
     float j = floor(pos.y) / 256.;
@@ -48,16 +48,16 @@ vec3 getInterpolatedNoise(in vec2 pos) {
     float v = fract(pos.y);
 
     /*
-    float du = 30.0*u*u*(u*(u-2.0)+1.0);
-    float dv = 30.0*v*v*(v*(v-2.0)+1.0);
-
+    float du = -30.0*u*u*(u*(u-2.0)+1.0);
+    float dv = -30.0*v*v*(v*(v-2.0)+1.0);
     u = u*u*u*(u*(u*6.0-15.0)+10.0);
     v = v*v*v*(v*(v*6.0-15.0)+10.0);
     */
 
-    float du = u * (6. - 6. * u);
-    float dv = v * (6. - 6. * v);
-
+    /* Inigo claims that there could be discontinuity artifacts with these
+     * equations rather than the set above. Works for me... */
+    float du = -6. * u * (1. - u);
+    float dv = -6. * v * (1. - v);
     u = u * u * (3. - 2. * u);
     v = v * v * (3. - 2. * v);
 
@@ -69,15 +69,16 @@ vec3 getInterpolatedNoise(in vec2 pos) {
     float k0 = a;
     float k1 = b - a;
     float k2 = c - a;
-    float k3 = a - b - c + d;
+    float k3 = d - c - k1;
 
     return vec3(
         k0 + k1*u + k2*v + k3*u*v,
-        -du * (k1 + k3*v),
-        -dv * (k2 + k3*u)
+        du * (k1 + k3*v),
+        dv * (k2 + k3*u)
     );
 }
 
+/* Generate Perlin noise to given octave. */
 float getPerlin(in vec2 pos, in int maxLevel) {
     float o = 0.;
     float w = 0.5;
@@ -93,12 +94,12 @@ float getPerlin(in vec2 pos, in int maxLevel) {
     return o;
 }
 
+/* Modified Perlin noise according to Inigo Quilez. */
 float getHeight(in vec2 pos, in int maxLevel) {
     float o = 0.;
-    float w = 0.5;
+    float w = 1.0;
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
-        /* Modified Perlin noise according to Inigo Quilez. */
         vec3 n = getInterpolatedNoise(pos);
 	d += n.yz;
         o += w * n.x / (1. + dot(d, d));
@@ -111,12 +112,12 @@ float getHeight(in vec2 pos, in int maxLevel) {
     return o;
 }
 
+/* Modified Perlin noise according to Inigo Quilez. */
 vec3 getHeightDerivate(in vec2 pos, in int maxLevel) {
     vec2 o = vec2(0., 0.);
-    float w = 0.5;
+    float w = 1.0;
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
-        /* Modified Perlin noise according to Inigo Quilez. */
         vec3 n = getInterpolatedNoise(pos);
 	d += n.yz;
         o += w * n.yz / (1. + dot(d, d));
@@ -129,81 +130,88 @@ vec3 getHeightDerivate(in vec2 pos, in int maxLevel) {
     return vec3(o, 1.0 - sqrt(dot(o, o)));
 }
 
-vec3 intersectWater(in vec3 pos, in vec3 dir, in float shallowness) {
+vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     vec2 waves = texture2D(uWatermap, pos.xy * 3. + vec2(uTime *.07, 0.)).xy
-         * texture2D(uWatermap, pos.xy * 4. + vec2(0., uTime *.11)).xy;
+         * texture2D(uWatermap, pos.xy * 4. + vec2(0.2, uTime *.11)).xy;
     waves -= 0.25;
 
     vec3 waterSurface = vec3(waves, 1.0 - sqrt(dot(waves, waves)));
-
     vec3 waterReflection = 2. * waterSurface * dot(waterSurface, SUN) - SUN;
 
     return
 	vec3(0.2, 0.2, 0.7)
-	* max(dot(waterSurface, SUN), 0.) / (0.25 + shallowness)
+	* max(dot(waterSurface, SUN), 0.)
 
 	+ vec3(1., 1., 1.)
-	  * pow(max(-dot(waterReflection, dir), 0.), 8.);
+	  * pow(max(-dot(waterReflection, dir), 0.), 8.) * .4;
 }
 
-vec3 intersectTerrain(in vec3 pos, in vec3 dir, out float t) {
-    vec3 terrain = vec3(0., 0., 0.);
-
+int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
     /* Dynamic LOD during marching:
      * After distance to scene has been acquired, update LOD. */
     t = 0.0;
-    int maxLevel = MAPITERATIONS/2;
+    int maxLevel = MAPITERATIONS;
+    
     for (int i = 0; i < RAYITERATIONS; i ++) {
-        float groundHeight = 2. * getHeight(pos.xy, maxLevel);
+        float groundHeight = getHeight(pos.xy, maxLevel);
         float height = groundHeight < 0.4 ? 0.4 : groundHeight;
         float dz = pos.z - height;
 
         float safeDist = dz * MARCH_SPEED;
         t += safeDist;
         pos += safeDist * dir;
-        maxLevel = int(LOD / (abs(dz) * t));
+
+	float dza = abs(dz);
+        maxLevel = int(LOD / (dza * t));
         
         /* Are we close enough to terrain? */
-        if (abs(dz) < STOPCONDITION * t) {
-            /* Get surface normal. */
-            vec3 d = getHeightDerivate(pos.xy, maxLevel);
-
-	    float noise = getPerlin(pos.xy * 128., 4);
-
-	    /* Beach */
-	    terrain = vec3(0.9, 0.9, 0.7);
-	    
-	    /* Grass -- if terrain is not flat, the beach is shorter */
-            float beachOrGrass = smoothstep(0.42, 0.44, height + d.z*.01);
-            vec3 grass = vec3(0.15, 0.3, 0.0) * noise;
-            terrain = mix(terrain,
-			  grass,
-                          beachOrGrass);
-
-	    /* Rock */
-	    float greenOrBarren = smoothstep(-0.2, -0.1, height - d.z + noise * .2);
-            terrain = mix(terrain, vec3(0.4, 0.45, 0.5) * getInterpolatedNoise(pos.xy * 512.).x, greenOrBarren);
-            
-	    /* Snow -- height increased if terrain is not flat. */
-	    float barrenOrSnow = smoothstep(1.80, 1.90, height + d.z + noise * .2);
-            terrain = mix(terrain, vec3(1.0, 1.0, 1.0), barrenOrSnow);
-
-            /* Apply lighting for objects above surface. */
-            float diffuse = smoothstep(0.3, 0.7, dot(d, SUN));
-            float ao = 1. - float(i) / float(RAYITERATIONS);
-            terrain *= diffuse * ao;
-
-            /* Blend water if under water level. */
-            float waterBlend = smoothstep(0.4, 0.41, height);
-            vec3 water = intersectWater(pos, dir, pos.z - groundHeight);
-            terrain = mix(water, terrain, waterBlend);
-            break;
+        if (dza < STOPCONDITION * t) {
+	    return maxLevel;
         }
         if (t > FOG) {
-            t = FOG;
             break;
         }
     }
+
+    t = FOG;
+    return 0;
+}
+
+vec3 getTerrainColor(in vec3 pos, in vec3 dir, out float distance) {
+    int maxLevel = intersectTerrain(pos, dir, distance);
+
+    /* Get surface normal. */
+    float height = getHeight(pos.xy, maxLevel);
+    vec3 d = getHeightDerivate(pos.xy, maxLevel);
+
+    float noise = getPerlin(pos.xy * 128., 4);
+
+    /* Sand */
+    vec3 terrain = vec3(0.9, 0.9, 0.7);
+	    
+    /* Grass -- if terrain is not flat, the beach is shorter */
+    float beachOrGrass = smoothstep(0.25, 0.26, height - d.z * .2);
+    vec3 grass = vec3(0.15, 0.3, 0.0) * noise;
+    terrain = mix(terrain,
+		  grass,
+		  beachOrGrass);
+
+    /* Rock */
+    float greenOrBarren = smoothstep(-0.2, -0.1, height - d.z + noise * .2);
+    terrain = mix(terrain, vec3(0.4, 0.45, 0.5) * getInterpolatedNoise(pos.xy * 512.).x, greenOrBarren);
+            
+    /* Snow -- height increased if terrain is not flat. */
+    float barrenOrSnow = smoothstep(1.80, 1.90, height + d.z + noise * .2);
+    terrain = mix(terrain, vec3(1.2, 1.2, 1.2), barrenOrSnow);
+
+    /* Apply lighting for objects above surface. */
+    float diffuse = (1. + smoothstep(0.3, 0.7, dot(d, SUN))) * .5;
+    terrain *= diffuse;
+
+    /* Blend water if under water level. */
+    float waterBlend = smoothstep(0.40, 0.41, height);
+    vec3 water = getWaterColor(pos, dir) / (0.25 + pos.z - height);
+    terrain = mix(water, terrain, waterBlend);
 
     return terrain;
 }
@@ -222,9 +230,9 @@ void main(void) {
     vec3 left = normalize(cross(UP, uDir));
     vec3 up = cross(uDir, left);
 
-    float groundHeight = 2. * getHeight(uPos.xy, 2);
-    if (groundHeight < 0.25) {
-	groundHeight = 0.25;
+    float groundHeight = getHeight(uPos.xy, 2);
+    if (groundHeight < 0.4) {
+	groundHeight = 0.4;
     }
 
     vec3 pos = vec3(uPos.xy, groundHeight + pow(2., -2.));
@@ -233,7 +241,7 @@ void main(void) {
     dir = normalize(dir);
 
     float distance;
-    vec3 terrain = intersectTerrain(pos, dir, distance);
+    vec3 terrain = getTerrainColor(pos, dir, distance);
 
     float sunAngle = pow(clamp(dot(dir, SUN), 0., 1.), 8.);
     float skyBrightness = clamp(1.-dir.z, 0., 1.);
