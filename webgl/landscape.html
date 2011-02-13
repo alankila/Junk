@@ -206,7 +206,7 @@ vec3 getTerrainColor(in vec3 pos, in int maxLevel) {
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float sunSpecular = pow(max(dot(dir, SUN), 0.), 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
-    float clouds = smoothstep(0.2, 0.9, getPerlin(pos.xy + dir.xy * 8. / dir.z, 2));
+    float clouds = smoothstep(0.2, 0.9, getPerlin(pos.xy + dir.xy * 8. / dir.z, 4));
     return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds)
 	+ vec3(2., 2., 2.) * sunSpecular;
 }
