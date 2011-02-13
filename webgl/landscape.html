@@ -30,8 +30,10 @@ const float LOD = 2.0;
 const float STOPCONDITION = 0.0025;
 /* Render distance. */
 const float FOG = 4.;
+/* Water level */
+const float WATER_LEVEL = 0.4;
 /* Direction to infinitely far-away Sun */
-const vec3 SUN = vec3(0.8, 0., 0.5);
+const vec3 SUN = vec3(0.8, 0., 0.6);
 /* The camera up direction. */
 const vec3 UP = vec3(0., 0., 1.);
 
@@ -183,32 +185,33 @@ vec3 getTerrainColor(in vec3 pos, in int maxLevel) {
             
     /* Snow -- height increased if terrain is not flat. */
     float barrenOrSnow = smoothstep(1.80, 1.90, height + d.z + noise * .2);
-    terrain = mix(terrain, vec3(1.2, 1.2, 1.2), barrenOrSnow);
+    terrain = mix(terrain, vec3(1.4, 1.4, 1.4), barrenOrSnow);
 
     /* Apply lighting */
-    float diffuse = (1. + smoothstep(0.3, 0.7, dot(d, SUN))) * .5;
+    float diffuse = max(dot(d, SUN), 0.);
     terrain *= diffuse;
 
     return terrain;
 }
 
-vec3 getSkyColor(in vec3 dir) {
-    float sunAngle = pow(clamp(dot(dir, SUN), 0., 1.), 8.);
+/* Render sky. */
+vec3 getSkyColor(in vec3 pos, in vec3 dir) {
+    float sunSpecular = pow(max(dot(dir, SUN), 0.), 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
-    return vec3(skyBrightness, skyBrightness, 1.) * .8 + vec3(1., 1., 1.) * sunAngle;
+    float clouds = smoothstep(0.3, 0.9, getPerlin(pos.xy + dir.xy * 8. / dir.z, 2));
+    return vec3(skyBrightness, skyBrightness, 1.) + vec3(2., 2., 2.) * sunSpecular + vec3(0.5, 0.5, 0.5) * clouds;
 }
 
+/* Calculate water color based on reflection and refraction. */
 vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     /* Calculate water surface normal. */
     vec2 waves = texture2D(uWatermap, pos.xy + vec2(uTime *.07, 0.)).xy
-         - texture2D(uWatermap, pos.xy + vec2(0.2, uTime *.11)).xy;
-    float waterDepth = 0.4 - getHeight(pos.xy, 8);
-
+         - texture2D(uWatermap, pos.xy + vec2(0., uTime *.11)).xy;
     vec3 normal = vec3(waves, 1.0 - sqrt(dot(waves, waves)));
 
     /* Fresnel equation approximation */
     float reflectionOrRefraction = max(-dot(dir, normal), 0.);
-    vec3 reflection = dir - 2.0 * dot(dir, normal) * normal;
+    vec3 reflection = dir - 2. * normal * dot(dir, normal);
 
     /* Reflect scenery */
     vec3 refpos = pos;
@@ -217,12 +220,13 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     vec3 reflectedTerrain = getTerrainColor(refpos, reflectionLevel);
 
     /* Add sky */
-    vec3 sky = getSkyColor(reflection);
+    vec3 sky = getSkyColor(pos, reflection);
     reflectedTerrain = mix(reflectedTerrain, sky, outLength/FOG);
 
-    /* Refract scenery (utterly fake) */
+    /* Refract scenery (utterly fake). */
+    float waterDepth = WATER_LEVEL - getHeight(pos.xy, 4);
     pos.xy -= waves * waterDepth;
-    pos.z = getHeight(pos.xy, 8);
+    pos.z = getHeight(pos.xy, 4);
     vec3 refractedTerrain = getTerrainColor(pos, 8);
     refractedTerrain = mix(refractedTerrain, vec3(0., 0.2, 0.4), waterDepth);
 
@@ -239,42 +243,46 @@ vec3 cross(in vec3 a, in vec3 b) {
 }
 
 void main(void) {
-    /* Calculate an orthonormal base for rendering. */
+    /* Calculate position of camera. */
+    float groundHeight = getHeight(uPos.xy, 2);
+    if (groundHeight < WATER_LEVEL) {
+	groundHeight = WATER_LEVEL;
+    }
+    vec3 cameraPos = vec3(uPos.xy, groundHeight + pow(2., -2.));
+    
+    /* Calculate an orthonormal basis based on lookat and up vector. */
     vec3 left = normalize(cross(UP, uDir));
     vec3 up = cross(uDir, left);
-
-    float groundHeight = getHeight(uPos.xy, 2);
-    if (groundHeight < 0.4) {
-	groundHeight = 0.4;
-    }
-
-    vec3 pos = vec3(uPos.xy, groundHeight + pow(2., -2.));
-    
     vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
     dir = normalize(dir);
-
+    
+    /* Terrain march. */
     float distance;
-    int maxLevel = intersectTerrain(pos, dir, distance);
-    vec3 terrain = getTerrainColor(pos, maxLevel);
+    vec3 terrainPos = cameraPos;
+    int maxLevel = intersectTerrain(terrainPos, dir, distance);
 
     /* Blend water if under water level. */
-    if (pos.z < 0.4) {
-	/* We hit a point underwater.
-	 * We will now backtrack to water surface
-	 * and shoot reflection and refraction rays. */
-
-	float backtrackLength = (0.4 - pos.z) / dir.z;
+    vec3 terrain;
+    if (terrainPos.z < WATER_LEVEL) {
+	/* Backtrack to water surface. */
+	float backtrackLength = (WATER_LEVEL - terrainPos.z) / dir.z;
 	distance -= backtrackLength;
-	vec3 waterPos = pos + dir * backtrackLength;
-
+	vec3 waterPos = terrainPos + dir * backtrackLength;
 	terrain = getWaterColor(waterPos, dir);
+    } else {
+	terrain = getTerrainColor(terrainPos, maxLevel);
     }
 
-    /* Sky */
-    vec3 sky = getSkyColor(dir);
-    terrain = mix(terrain, sky, distance/FOG);
+    /* Distance fog. */
+    terrain = mix(terrain, vec3(1., 1., 1.), distance/FOG);
 
-    gl_FragColor = vec4(sqrt(terrain), 1);
+    /* Sky */
+    if (distance / FOG == 1.) {
+	terrain = getSkyColor(cameraPos, dir);
+    }
+
+    float exposureControl = clamp(dot(uDir, SUN), 0., 1.);
+    gl_FragColor = vec4(sqrt(terrain / (1. + exposureControl)), 1);
 }
 </script> 
 
