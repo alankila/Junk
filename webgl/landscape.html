@@ -39,7 +39,7 @@ const vec3 UP = vec3(0., 0., 1.);
 
 /* Substitute with white noise generator. */
 float getNoise(in float x, in float y) {
-    return texture2D(uNoise, vec2(x, y)).b;
+    return texture2D(uNoise, vec2(x, y)).g;
 }
 
 /* Derivation by Inigo Quilez. */
@@ -49,19 +49,10 @@ vec3 getInterpolatedNoise(in vec2 pos) {
     float u = fract(pos.x);
     float v = fract(pos.y);
 
-    /*
     float du = -30.0*u*u*(u*(u-2.0)+1.0);
     float dv = -30.0*v*v*(v*(v-2.0)+1.0);
     u = u*u*u*(u*(u*6.0-15.0)+10.0);
     v = v*v*v*(v*(v*6.0-15.0)+10.0);
-    */
-
-    /* Inigo claims that there could be discontinuity artifacts with these
-     * equations rather than the set above. Works for me... */
-    float du = -6. * u * (1. - u);
-    float dv = -6. * v * (1. - v);
-    u = u * u * (3. - 2. * u);
-    v = v * v * (3. - 2. * v);
 
     float a = getNoise(i, j);
     float b = getNoise(i+1./256., j);
@@ -223,12 +214,14 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
 /* Calculate water color based on reflection and refraction. */
 vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     /* Calculate water surface normal. */
-    vec2 waves = texture2D(uWatermap, pos.xy * 1.7 + vec2(uTime *.07, 0.)).xy
-         - texture2D(uWatermap, pos.xy + vec2(0., uTime *.11)).xy;
+    vec2 wave1 = texture2D(uWatermap, pos.xy * 1.7 + vec2(uTime *.07, 0.)).xy;
+    vec2 wave2 = texture2D(uWatermap, pos.xy + vec2(0., uTime *.11)).xy;
+    vec2 waves = wave1 - wave2;
     vec3 normal = vec3(waves, 1.0 - sqrt(dot(waves, waves)));
 
     /* Fresnel equation approximation */
     float reflectionOrRefraction = max(-dot(dir, normal), 0.);
+    reflectionOrRefraction = sqrt(reflectionOrRefraction);
     vec3 reflection = dir - 2. * normal * dot(dir, normal);
 
     /* Reflect scenery */
@@ -246,7 +239,8 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     pos.xy -= waves * waterDepth;
     pos.z = getHeight(pos.xy, 4);
     vec3 refractedTerrain = getTerrainColor(pos, 8);
-    refractedTerrain = mix(refractedTerrain, vec3(0., 0.2, 0.4), waterDepth);
+    /* caustics */
+    refractedTerrain *= 1. + waterDepth * pow(.6 + .5 * sin((waterDepth + wave1.x + wave2.x) * 30.), 8.);
 
     return mix(reflectedTerrain, refractedTerrain, reflectionOrRefraction);
 }
