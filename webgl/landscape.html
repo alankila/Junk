@@ -132,6 +132,20 @@ vec3 getHeightDerivate(in vec2 pos, in int maxLevel) {
     return vec3(o, 1.0 - sqrt(dot(o, o)));
 }
 
+/* Terrain marching.
+ *
+ * At each step along the way, the height of the ray from
+ * ground is computed, and this is converted into a guesstimate
+ * about a "safe" distance for ray to skip forwards.
+ *
+ * The octaves of Perlin noise that generates the landscape are
+ * reduced if the ray appears to be far from the terrain, or
+ * far from viewer.
+ *
+ * The stop condition also gets progressively coarser as
+ * the ray gains distance to viewer. This should naturally "antialias"
+ * the scenery at distance.
+ */
 int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
     /* Dynamic LOD during marching:
      * After distance to scene has been acquired, update LOD. */
@@ -139,20 +153,24 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
     int maxLevel = MAPITERATIONS;
     
     for (int i = 0; i < RAYITERATIONS; i ++) {
-        float height = getHeight(pos.xy, maxLevel);
-        float dz = pos.z - height;
+        float height = pos.z - getHeight(pos.xy, maxLevel);
 
-        float safeDist = dz * MARCH_SPEED;
-        t += safeDist;
-        pos += safeDist * dir;
+	/* There's a trick here. Our distance estimates are not conservative;
+	 * if the ray steps into the terrain, height is negative, and the ray will
+         * backtrack automatically. */
+        float distanceEstimate = height * MARCH_SPEED;
+        t += distanceEstimate;
+        pos += distanceEstimate * dir;
 
-	float dza = abs(dz);
-        maxLevel = int(LOD / (dza * t));
+	/* Dynamic level of detail. */
+	float absHeight = abs(height);
+        maxLevel = int(LOD / (absHeight * t));
         
         /* Are we close enough to terrain? */
-        if (dza < STOPCONDITION * t) {
+        if (absHeight < STOPCONDITION * t) {
 	    return maxLevel;
         }
+
         if (t > FOG) {
             break;
         }
@@ -164,7 +182,6 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
 
 vec3 getTerrainColor(in vec3 pos, in int maxLevel) {
     /* Get surface normal. */
-    float height = getHeight(pos.xy, maxLevel);
     vec3 d = getHeightDerivate(pos.xy, maxLevel);
 
     float noise = getPerlin(pos.xy * 128., 4);
@@ -173,18 +190,18 @@ vec3 getTerrainColor(in vec3 pos, in int maxLevel) {
     vec3 terrain = vec3(0.9, 0.9, 0.7);
 	    
     /* Grass -- if terrain is not flat, the beach is shorter */
-    float beachOrGrass = smoothstep(0.25, 0.26, height - d.z * .2);
+    float beachOrGrass = smoothstep(0.25, 0.26, pos.z - d.z * .2);
     vec3 grass = vec3(0.15, 0.3, 0.0) * noise;
     terrain = mix(terrain,
 		  grass,
 		  beachOrGrass);
 
     /* Rock */
-    float greenOrBarren = smoothstep(-0.2, -0.1, height - d.z + noise * .2);
+    float greenOrBarren = smoothstep(-0.2, -0.1, pos.z - d.z + noise * .2);
     terrain = mix(terrain, vec3(0.4, 0.45, 0.5) * getInterpolatedNoise(pos.xy * 512.).x, greenOrBarren);
             
     /* Snow -- height increased if terrain is not flat. */
-    float barrenOrSnow = smoothstep(1.80, 1.90, height + d.z + noise * .2);
+    float barrenOrSnow = smoothstep(1.80, 1.90, pos.z + d.z + noise * .2);
     terrain = mix(terrain, vec3(1.4, 1.4, 1.4), barrenOrSnow);
 
     /* Apply lighting */
@@ -206,7 +223,7 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
 /* Calculate water color based on reflection and refraction. */
 vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     /* Calculate water surface normal. */
-    vec2 waves = texture2D(uWatermap, pos.xy + vec2(uTime *.07, 0.)).xy
+    vec2 waves = texture2D(uWatermap, pos.xy * 1.7 + vec2(uTime *.07, 0.)).xy
          - texture2D(uWatermap, pos.xy + vec2(0., uTime *.11)).xy;
     vec3 normal = vec3(waves, 1.0 - sqrt(dot(waves, waves)));
 
