@@ -237,7 +237,7 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
     vec3 highfreqNoiseDerivate = fbmPerlin2dDerivate(pos.xy * 1024., 3);
 
     /* Sand */
-    vec4 terrain = vec4(0.9, 0.9, 0.6, 0.) * (.5 + .5 * highfreqNoise);
+    vec4 terrain = vec4(1., 1., .5, 0.) * (.5 + .5 * highfreqNoise) * pos.z;
     vec3 terrainNormal = vec3(0., 0., 0.);
 
     /* Grass -- if terrain is not flat, the beach is shorter */
@@ -245,13 +245,16 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
     vec4 grass = vec4(0.15, 0.3, 0.0, 0.) * highfreqNoise;
     terrain = mix(terrain, grass, beachOrGrass);
 
-    /* Rock */
-    float rockNoise = fbmPerlin2d(pos.xy * 100., 2);
-    float rockStripe = .5 + .5 * sin(13. * rockNoise * rockNoise);
+    /* Rock: two layers of texturing and normals:
+     * first layer is coarse world-terrain noise
+     * added to it is the same high-frequency noise
+     * used for sand and grass */
     float greenOrBarren = smoothstep(.5, .6, pos.z - normal.z + noise * .2);
-    vec4 rock = (vec4(.2, .2, .2, .05) + .5 * smoothstep(0.7, 0.9, highfreqNoise)) * rockStripe;
-    terrain = mix(terrain, rock, greenOrBarren);
-    vec3 rockNormal = highfreqNoiseDerivate;
+    float rockStripe = (noise - 0.3) * 1.5;
+    rockStripe = rockStripe * rockStripe;
+    vec4 rock = vec4(.3, .3, .3, .1) + highfreqNoise * highfreqNoise * highfreqNoise;
+    terrain = mix(terrain, rock * rockStripe, greenOrBarren);
+    vec3 rockNormal = noiseDerivate + highfreqNoiseDerivate;
     terrainNormal = mix(terrainNormal, rockNormal, greenOrBarren);
 
     /* Snow -- height increased if terrain is not flat. */
@@ -275,8 +278,9 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float sunAngle = max(dot(dir, SUN), 0.);
     float sunSpecular = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
-    float clouds = smoothstep(0.4, 0.7, fbmPerlin2d(pos.xy + dir.xy * (8. - pos.z) / dir.z, 3)) * dir.z;
-    return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds) * (1. + sunAngle)
+    float clouds = fbmPerlin2d(pos.xy + dir.xy * (8. - pos.z) / dir.z, 3);
+    clouds *= clouds;
+    return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds * dir.z) * (1. + sunAngle)
 	+ SUN_INTENSITY * sunSpecular;
 }
 
