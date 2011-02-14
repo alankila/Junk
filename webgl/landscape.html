@@ -246,13 +246,12 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
     terrain = mix(terrain, grass, beachOrGrass);
 
     /* Rock */
+    float rockNoise = fbmPerlin2d(pos.xy * 100., 2);
+    float rockStripe = .5 + .5 * sin(13. * rockNoise * rockNoise);
     float greenOrBarren = smoothstep(.5, .6, pos.z - normal.z + noise * .2);
-    vec4 rock = mix(
-	vec4(0.17, 0.15, 0.12, .01),
-	vec4(0.2, 0.2, 0.2, .05) + .3 * smoothstep(0.7, 0.9, highfreqNoise),
-	smoothstep(0.0, 0.7, noise));
+    vec4 rock = (vec4(.2, .2, .2, .05) + .5 * smoothstep(0.7, 0.9, highfreqNoise)) * rockStripe;
     terrain = mix(terrain, rock, greenOrBarren);
-    vec3 rockNormal = mix(noiseDerivate, highfreqNoiseDerivate, smoothstep(0.0, 0.7, noise));
+    vec3 rockNormal = highfreqNoiseDerivate;
     terrainNormal = mix(terrainNormal, rockNormal, greenOrBarren);
 
     /* Snow -- height increased if terrain is not flat. */
