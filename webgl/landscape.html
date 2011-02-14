@@ -34,115 +34,122 @@ const float FOG = 5.;
 const float WATER_LEVEL = 0.4;
 /* Direction to infinitely far-away Sun */
 const vec3 SUN = vec3(0.8, 0., 0.6);
+/* Sun's brightness. */
+const float SUN_INTENSITY = 8.;
 /* The camera up direction. */
 const vec3 UP = vec3(0., 0., 1.);
 
-const float F2 = 0.366025403784;
-const float G2 = 0.211324865405;
+const vec2 F2 = vec2(0.366025403784, 0.366025403784);
+const vec2 G2 = vec2(0.211324865405, 0.211324865405);
 const float ONE = 1./256.;
-const float ONEHALF = 1./512.;
 
 /* This function is based on the work of John Davis and Stefan Gustavson. */
 vec3 simplex2d(in vec2 P) {
-    // Skew the (x,y) space to determine which cell of 2 simplices we're in
-    float s = (P.x + P.y) * F2;   // Hairy factor for 2D skewing
+    float s = dot(P, F2);
     vec2 Pi = floor(P + s);
-    float t = (Pi.x + Pi.y) * G2; // Hairy factor for unskewing
-    vec2 P0 = Pi - t; // Unskew the cell origin back to (x,y) space
-    Pi = Pi * ONE + ONEHALF; // Integer part, scaled and offset for texture lookup
-
-    vec2 Pf0 = P - P0;  // The x,y distances from the cell origin
+    float t = dot(Pi, G2);
+    vec2 Pf0 = P - Pi + t;
 
     // For the 2D case, the simplex shape is an equilateral triangle.
     // Find out whether we are above or below the x=y diagonal to
     // determine which of the two triangles we're in.
-    vec2 o1;
-    if (Pf0.x > Pf0.y)
-	o1 = vec2(1.0, 0.0);  // +x, +y traversal order
-    else
-	o1 = vec2(0.0, 1.0);  // +y, +x traversal order
+    vec2 o1 = vec2(Pf0.x > Pf0.y, Pf0.x <= Pf0.y);
+
+    /* Get simplex gradients. The texture
+     * contains 4 values per pixel, the rg pair being
+     * gradient at (0, 0) and ba pair being the gradient at (1, 1).
+     */
+    Pi += .5;
+    vec4 grad02 = texture2D(uNoise, Pi * ONE) * 2.0 - 1.0;
+    vec2 grad0 = grad02.rg;
+    vec2 grad1 = texture2D(uNoise, (Pi + o1) * ONE).rg * 2.0 - 1.0;
+    vec2 grad2 = grad02.ba;
 
     // Noise contribution from simplex origin
-    vec4 grad02 = texture2D(uNoise, Pi) * 2.0 - 1.0;
-    vec2 grad0 = grad02.rg;
     float t0 = max(0.5 - dot(Pf0, Pf0), 0.);
     float t02 = t0 * t0;
     float t04 = t02 * t02;
 
     // Noise contribution from middle corner
     vec2 Pf1 = Pf0 - o1 + G2;
-    vec2 grad1 = texture2D(uNoise, Pi + o1*ONE).rg * 2.0 - 1.0;
     float t1 = max(0.5 - dot(Pf1, Pf1), 0.);
     float t12 = t1 * t1;
     float t14 = t12 * t12;
   
     // Noise contribution from last corner
-    vec2 Pf2 = Pf0 - vec2(1.0-2.0*G2);
-    vec2 grad2 = grad02.ba;
+    vec2 Pf2 = Pf0 + 2.0 * G2 - 1.0;
     float t2 = max(0.5 - dot(Pf2, Pf2), 0.);
     float t22 = t2 * t2;
     float t24 = t22 * t22;
 
-    // Sum up and scale the result to cover the range [-.5,5]
+    /* Common factors in derivates and value. */
+    float t0d = 8. * t0 * t02 * dot(grad0, Pf0);
+    float t1d = 8. * t1 * t12 * dot(grad1, Pf1);
+    float t2d = 8. * t2 * t22 * dot(grad2, Pf2);
+
+    grad0 *= t04;
+    grad1 *= t14;
+    grad2 *= t24;
+
+    // Sum up and scale the result to cover the range [-.5,.5]
     return vec3(
-	  t04 * dot(grad0, Pf0)
-	+ t14 * dot(grad1, Pf1)
-	+ t24 * dot(grad2, Pf2),
+	  (t0d * t0 + t1d * t1 + t2d * t2) * .125,
 
-	  8. * t0 * t02 * Pf0.x * dot(grad0, Pf0) - t04 * grad0.x
-	+ 8. * t1 * t12 * Pf1.x * dot(grad1, Pf1) - t14 * grad1.x
-	+ 8. * t2 * t22 * Pf2.x * dot(grad2, Pf2) - t24 * grad2.x,
+	  t0d * Pf0.x - grad0.x
+	+ t1d * Pf1.x - grad1.x
+	+ t2d * Pf2.x - grad2.x,
 
-	  8. * t0 * t02 * Pf0.y * dot(grad0, Pf0) - t04 * grad0.y
-	+ 8. * t1 * t12 * Pf1.y * dot(grad1, Pf1) - t14 * grad1.y
-	+ 8. * t2 * t22 * Pf2.y * dot(grad2, Pf2) - t24 * grad2.y
+	  t0d * Pf0.y - grad0.y
+	+ t1d * Pf1.y - grad1.y
+	+ t2d * Pf2.y - grad2.y
     ) * 70.;
 }
 
-/* Combine simplex noise to given octave. */
+/* Combine simplex noise to given octave. Output: 0 .. 1 */
 float fbmPerlin2d(in vec2 pos, in int maxLevel) {
     pos *= .25;
-    float o = 0.;
-    float w = 0.25;
+    float w = 0.5;
+    float o = w;
     for (int i = 0; i < MAPITERATIONS; i ++) {
-        vec3 n = simplex2d(pos);
-        o += w * n.x;
+        o += w * simplex2d(pos).x;
         if (i >= maxLevel) {
             break;
         }
         w *= .5;
         pos *= 2.;
     }
-    return o + .5;
+    return o;
 }
 
 /* Combine simplex noise to given octave. */
 vec3 fbmPerlin2dDerivate(in vec2 pos, in int maxLevel) {
     pos *= .25;
+    float w = 0.5;
     vec2 o = vec2(0., 0.);
-    float w = 0.25;
     for (int i = 0; i < MAPITERATIONS; i ++) {
-        vec3 n = simplex2d(pos);
-        o += w * n.yz;
+	vec3 n = simplex2d(pos);
+	o += n.yz * w;
         if (i >= maxLevel) {
             break;
         }
         w *= .5;
         pos *= 2.;
     }
-    return vec3(o, 1.0 - sqrt(dot(o, o)));
+    /* Fixme: better code to convert partial derivates to normal vector. */
+    float phi = atan(o.x);
+    float theta = atan(o.y);
+    return vec3(sin(phi), sin(theta), cos(phi) * cos(theta));
 }
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez. */
 float fbmQuilez2d(in vec2 pos, in int maxLevel) {
     pos *= .25;
-    float o = 0.;
-    float w = 1.0;
+    float w = 0.5;
+    float o = w;
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	n.yz *= .25;
-	d += n.yz;
+	d += n.yz * .25;
         o += w * n.x / (1. + dot(d, d));
         if (i >= maxLevel) {
             break;
@@ -150,27 +157,31 @@ float fbmQuilez2d(in vec2 pos, in int maxLevel) {
         w *= .5;
         pos *= 2.;
     }
-    return o + .5;
+    return o * 2.;
 }
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez. */
 vec3 fbmQuilez2dDerivate(in vec2 pos, in int maxLevel) {
     pos *= .25;
-    vec2 o = vec2(0., 0.);
-    float w = 1.0;
+    float w = 0.5;
     vec2 d = vec2(0., 0.);
+    vec2 o = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	n.yz *= .25;
-	d += n.yz;
-        o += w * n.yz / (1. + dot(d, d));
+	d += n.yz * .25;
+	o += w * n.yz / (1. + dot(d, d));
         if (i >= maxLevel) {
             break;
         }
+
         w *= .5;
         pos *= 2.;
     }
-    return vec3(o, 1.0 - sqrt(dot(o, o)));
+
+    o *= 2.;
+    float phi = atan(o.x);
+    float theta = atan(o.y);
+    return vec3(sin(phi), sin(theta), cos(phi) * cos(theta));
 }
 
 /* Terrain marching.
@@ -224,48 +235,50 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
 vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
     /* Get surface properties. */
     vec3 normal = fbmQuilez2dDerivate(pos.xy, maxLevel);
-    float noise = fbmPerlin2d(pos.xy * 128., 4);
+    float noise = fbmPerlin2d(pos.xy * 64., 4);
+    float highfreqNoise = fbmPerlin2d(pos.xy * 32., 4);
 
     /* Sand */
-    vec4 terrain = vec4(0.9, 0.9, 0.7, 0.);
+    vec4 terrain = vec4(0.9, 0.9, 0.6, 0.) * (.5 + .5 * highfreqNoise);
     vec3 terrainNormal = vec3(0., 0., 0.);
 
     /* Grass -- if terrain is not flat, the beach is shorter */
-    float beachOrGrass = smoothstep(0.30, 0.31, pos.z - normal.z * .2);
+    float beachOrGrass = smoothstep(.35, .36, pos.z - normal.z * .1);
     vec4 grass = vec4(0.15, 0.3, 0.0, 0.) * noise;
     terrain = mix(terrain, grass, beachOrGrass);
 
     /* Rock */
-    float greenOrBarren = smoothstep(0.4, 0.5, pos.z - normal.z * .5 + noise * .2);
-    float rockRelief = smoothstep(0.3, 0.5, fbmPerlin2d(pos.xy * 512., 2));
-    vec4 rock = mix(vec4(0.1, 0.07, 0.05, .2), vec4(0.2, 0.2, 0.23, .4), rockRelief);
+    float greenOrBarren = smoothstep(.1, .2, pos.z - normal.z + noise * .2);
+    float rockRelief = smoothstep(0.3, 0.5, highfreqNoise);
+    vec4 rock = mix(vec4(0.1, 0.08, 0.07, .01), vec4(0.2, 0.18, 0.17, .05), rockRelief);
     terrain = mix(terrain, rock, greenOrBarren);
-    vec3 rockNormal = fbmPerlin2dDerivate(pos.xy * 512., 2);
+    vec3 rockNormal = fbmPerlin2dDerivate(pos.xy * 32., 4);
     terrainNormal = mix(terrainNormal, rockNormal, greenOrBarren);
 
     /* Snow -- height increased if terrain is not flat. */
-    float barrenOrSnow = smoothstep(2.05, 2.15, pos.z + normal.z + noise * .2);
-    terrain = mix(terrain, vec4(1.4, 1.4, 1.4, 0.), barrenOrSnow);
+    float barrenOrSnow = smoothstep(2.4, 2.5, pos.z + normal.z + noise * .2);
+    terrain = mix(terrain, vec4(1.4, 1.4, 1.4, .1), barrenOrSnow);
     terrainNormal = mix(terrainNormal, vec3(0., 0., 0.), barrenOrSnow);
     
     /* Apply lighting */
     float shadow = max(dot(normal, SUN), 0.);
-    normal = normalize(normal + terrainNormal * .4);
+    normal = normalize(normal + terrainNormal * .25);
     float diffuse = max(dot(normal, SUN), 0.1);
     vec3 reflection = 2. * normal * dot(SUN, normal) - SUN;
 
     return terrain.xyz * diffuse
-	+ terrain.w * pow(max(-dot(reflection, dir), 0.), 20.) * shadow;
+	+ SUN_INTENSITY * terrain.w * pow(max(-dot(reflection, dir), 0.), 20.) * shadow;
 
 }
 
 /* Render sky. */
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
-    float sunSpecular = pow(max(dot(dir, SUN), 0.), 40.);
+    float sunAngle = max(dot(dir, SUN), 0.);
+    float sunSpecular = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
-    float clouds = smoothstep(0.4, 1.0, fbmPerlin2d(pos.xy + dir.xy * (8. - pos.z) / dir.z, 2));
-    return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds)
-	+ vec3(2., 2., 2.) * sunSpecular;
+    float clouds = smoothstep(0.4, 0.7, fbmPerlin2d(pos.xy + dir.xy * (8. - pos.z) / dir.z, 3)) * dir.z;
+    return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds) * (1. + sunAngle)
+	+ SUN_INTENSITY * sunSpecular;
 }
 
 /* Calculate water color based on reflection and refraction. */
@@ -312,6 +325,12 @@ vec3 cross(in vec3 a, in vec3 b) {
 }
 
 void main(void) {
+    //gl_FragColor = vec4(fbmPerlin2d(vPosition*4., 8) * vec3(1., 1., 1.), 1.);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2dDerivate(vPosition*4., 8), 1.);
+    //gl_FragColor = vec4(fbmQuilez2d(vPosition * 8., 8) * vec3(1., 1., 1.) * .5, 1.);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2dDerivate(vPosition * 8., 8) * .5, 1.);
+    //return;
+
     /* Calculate position of camera. */
     float groundHeight = fbmQuilez2d(uPos.xy, 2);
     if (groundHeight < WATER_LEVEL) {
@@ -350,8 +369,8 @@ void main(void) {
 	terrain = getSkyColor(cameraPos, dir);
     }
 
-    float exposureControl = clamp(dot(uDir, SUN), 0., 1.);
-    gl_FragColor = vec4(sqrt(terrain / (1. + exposureControl)), 1);
+    float exposureControl = 1. - max(dot(uDir, SUN), 0.) * (1. - 1./SUN_INTENSITY);
+    gl_FragColor = vec4(sqrt(terrain * exposureControl), 1);
 }
 </script> 
 
