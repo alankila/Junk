@@ -37,44 +37,79 @@ const vec3 SUN = vec3(0.8, 0., 0.6);
 /* The camera up direction. */
 const vec3 UP = vec3(0., 0., 1.);
 
-/* Substitute with white noise generator. */
-float getNoise(in float x, in float y) {
-    return texture2D(uNoise, vec2(x, y)).g;
-}
+vec3 getInterpolatedNoise(in vec2 P) {
+// Skew and unskew factors are a bit hairy for 2D, so define them as constants
+// This is (sqrt(3.0)-1.0)/2.0
+#define F2 0.366025403784
+// This is (3.0-sqrt(3.0))/6.0
+#define G2 0.211324865405
+/*
+ * To create offsets of one texel and one half texel in the
+ * texture lookup, we need to know the texture image size.
+ */
+#define ONE 0.00390625
+#define ONEHALF 0.001953125
 
-/* Derivation by Inigo Quilez. */
-vec3 getInterpolatedNoise(in vec2 pos) {
-    float i = floor(pos.x) / 256.;
-    float j = floor(pos.y) / 256.;
-    float u = fract(pos.x);
-    float v = fract(pos.y);
+    // Skew the (x,y) space to determine which cell of 2 simplices we're in
+    float s = (P.x + P.y) * F2;   // Hairy factor for 2D skewing
+    vec2 Pi = floor(P + s);
+    float t = (Pi.x + Pi.y) * G2; // Hairy factor for unskewing
+    vec2 P0 = Pi - t; // Unskew the cell origin back to (x,y) space
+    Pi = Pi * ONE + ONEHALF; // Integer part, scaled and offset for texture lookup
 
-    float du = -30.0*u*u*(u*(u-2.0)+1.0);
-    float dv = -30.0*v*v*(v*(v-2.0)+1.0);
-    u = u*u*u*(u*(u*6.0-15.0)+10.0);
-    v = v*v*v*(v*(v*6.0-15.0)+10.0);
+    vec2 Pf0 = P - P0;  // The x,y distances from the cell origin
 
-    float a = getNoise(i, j);
-    float b = getNoise(i+1./256., j);
-    float c = getNoise(i, j+1./256.);
-    float d = getNoise(i+1./256., j+1./256.);
+    // For the 2D case, the simplex shape is an equilateral triangle.
+    // Find out whether we are above or below the x=y diagonal to
+    // determine which of the two triangles we're in.
+    vec2 o1;
+    if (Pf0.x > Pf0.y)
+	o1 = vec2(1.0, 0.0);  // +x, +y traversal order
+    else
+	o1 = vec2(0.0, 1.0);  // +y, +x traversal order
 
-    float k0 = a;
-    float k1 = b - a;
-    float k2 = c - a;
-    float k3 = d - c - k1;
+    // Noise contribution from simplex origin
+    vec4 grad02 = texture2D(uNoise, Pi) * 2.0 - 1.0;
+    vec2 grad0 = grad02.rg;
+    float t0 = max(0.5 - dot(Pf0, Pf0), 0.);
+    float t02 = t0 * t0;
+    float t04 = t02 * t02;
 
+    // Noise contribution from middle corner
+    vec2 Pf1 = Pf0 - o1 + G2;
+    vec2 grad1 = texture2D(uNoise, Pi + o1*ONE).rg * 2.0 - 1.0;
+    float t1 = max(0.5 - dot(Pf1, Pf1), 0.);
+    float t12 = t1 * t1;
+    float t14 = t12 * t12;
+  
+    // Noise contribution from last corner
+    vec2 Pf2 = Pf0 - vec2(1.0-2.0*G2);
+    vec2 grad2 = grad02.ba;
+    float t2 = max(0.5 - dot(Pf2, Pf2), 0.);
+    float t22 = t2 * t2;
+    float t24 = t22 * t22;
+
+    // Sum up and scale the result to cover the range [-.5,5]
     return vec3(
-        k0 + k1*u + k2*v + k3*u*v,
-        du * (k1 + k3*v),
-        dv * (k2 + k3*u)
-    );
+	  t04 * dot(grad0, Pf0)
+	+ t14 * dot(grad1, Pf1)
+	+ t24 * dot(grad2, Pf2),
+
+	  8. * t0 * t02 * Pf0.x * dot(grad0, Pf0) - t04 * grad0.x
+	+ 8. * t1 * t12 * Pf1.x * dot(grad1, Pf1) - t14 * grad1.x
+	+ 8. * t2 * t22 * Pf2.x * dot(grad2, Pf2) - t24 * grad2.x,
+
+	  8. * t0 * t02 * Pf0.y * dot(grad0, Pf0) - t04 * grad0.y
+	+ 8. * t1 * t12 * Pf1.y * dot(grad1, Pf1) - t14 * grad1.y
+	+ 8. * t2 * t22 * Pf2.y * dot(grad2, Pf2) - t24 * grad2.y
+    ) * 70.;
 }
 
-/* Generate Perlin noise to given octave. */
+/* Combine Perlin noise to given octave. */
 float getPerlin(in vec2 pos, in int maxLevel) {
+    pos *= .25;
     float o = 0.;
-    float w = 0.5;
+    float w = 0.25;
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = getInterpolatedNoise(pos);
         o += w * n.x;
@@ -84,36 +119,57 @@ float getPerlin(in vec2 pos, in int maxLevel) {
         w *= .5;
         pos *= 2.;
     }
-    return o;
+    return o + .5;
 }
 
-/* Modified Perlin noise according to Inigo Quilez. */
-float getHeight(in vec2 pos, in int maxLevel) {
-    float o = 0.;
-    float w = 1.0;
-    vec2 d = vec2(0., 0.);
+/* Combine Perlin noise to given octave. */
+vec3 getPerlinDerivate(in vec2 pos, in int maxLevel) {
+    pos *= .25;
+    vec2 o = vec2(0., 0.);
+    float w = 0.25;
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = getInterpolatedNoise(pos);
-	d += n.yz;
-        o += w * n.x / (1. + dot(d, d) * .25);
+        o += w * n.yz;
         if (i >= maxLevel) {
             break;
         }
         w *= .5;
         pos *= 2.;
     }
-    return o;
+    return vec3(o, 1.0 - sqrt(dot(o, o)));
 }
 
-/* Modified Perlin noise according to Inigo Quilez. */
+/* Modified Perlin noise combine function according to Inigo Quilez. */
+float getHeight(in vec2 pos, in int maxLevel) {
+    pos *= .25;
+    float o = 0.;
+    float w = 1.0;
+    vec2 d = vec2(0., 0.);
+    for (int i = 0; i < MAPITERATIONS; i ++) {
+        vec3 n = getInterpolatedNoise(pos);
+	n.yz *= .5;
+	d += n.yz;
+        o += w * n.x / (1. + dot(d, d));
+        if (i >= maxLevel) {
+            break;
+        }
+        w *= .5;
+        pos *= 2.;
+    }
+    return o + .5;
+}
+
+/* Modified Perlin noise combine function according to Inigo Quilez. */
 vec3 getHeightDerivate(in vec2 pos, in int maxLevel) {
+    pos *= .25;
     vec2 o = vec2(0., 0.);
     float w = 1.0;
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = getInterpolatedNoise(pos);
+	n.yz *= .5;
 	d += n.yz;
-        o += w * n.yz / (1. + dot(d, d) * .25);
+        o += w * n.yz / (1. + dot(d, d));
         if (i >= maxLevel) {
             break;
         }
@@ -173,30 +229,36 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
 
 vec3 getTerrainColor(in vec3 pos, in int maxLevel) {
     /* Get surface normal. */
-    vec3 d = getHeightDerivate(pos.xy, maxLevel);
+    vec3 normal = getHeightDerivate(pos.xy, maxLevel);
 
     float noise = getPerlin(pos.xy * 128., 4);
 
     /* Sand */
     vec3 terrain = vec3(0.9, 0.9, 0.7);
+    /* Hack: this is only a small adjustment around 0. */
+    vec3 terrainNormal = vec3(0., 0., 0.);
 	    
     /* Grass -- if terrain is not flat, the beach is shorter */
-    float beachOrGrass = smoothstep(0.25, 0.26, pos.z - d.z * .2);
+    float beachOrGrass = smoothstep(0.30, 0.31, pos.z - normal.z * .2);
     vec3 grass = vec3(0.15, 0.3, 0.0) * noise;
     terrain = mix(terrain,
 		  grass,
 		  beachOrGrass);
 
     /* Rock */
-    float greenOrBarren = smoothstep(-0.2, -0.1, pos.z - d.z + noise * .2);
-    terrain = mix(terrain, vec3(0.4, 0.45, 0.5) * getInterpolatedNoise(pos.xy * 512.).x, greenOrBarren);
-            
-    /* Snow -- height increased if terrain is not flat. */
-    float barrenOrSnow = smoothstep(1.80, 1.90, pos.z + d.z + noise * .2);
-    terrain = mix(terrain, vec3(1.4, 1.4, 1.4), barrenOrSnow);
+    float greenOrBarren = smoothstep(0.4, 0.5, pos.z - normal.z * .5 + noise * .2);
+    vec3 rock = vec3(0.2, 0.2, 0.2);
+    terrain = mix(terrain, rock, greenOrBarren);
+    vec3 rockNormal = getPerlinDerivate(pos.xy * 512., 2);
+    terrainNormal = mix(terrainNormal, rockNormal, greenOrBarren);
 
+    /* Snow -- height increased if terrain is not flat. */
+    float barrenOrSnow = smoothstep(1.55, 1.65, pos.z + normal.z * .5 + noise * .2);
+    terrain = mix(terrain, vec3(1.4, 1.4, 1.4), barrenOrSnow);
+    terrainNormal = mix(terrainNormal, vec3(0., 0., 0.), barrenOrSnow);
+    
     /* Apply lighting */
-    float diffuse = max(dot(d, SUN), 0.);
+    float diffuse = max(dot(normal + terrainNormal * .4, SUN), 0.1);
     terrain *= diffuse;
 
     return terrain;
@@ -206,7 +268,7 @@ vec3 getTerrainColor(in vec3 pos, in int maxLevel) {
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float sunSpecular = pow(max(dot(dir, SUN), 0.), 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
-    float clouds = smoothstep(0.2, 0.9, getPerlin(pos.xy + dir.xy * 8. / dir.z, 4));
+    float clouds = smoothstep(0.4, 1.0, getPerlin(pos.xy + dir.xy * (8. - pos.z) / dir.z, 2));
     return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds)
 	+ vec3(2., 2., 2.) * sunSpecular;
 }
@@ -240,7 +302,7 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     pos.z = getHeight(pos.xy, 4);
     vec3 refractedTerrain = getTerrainColor(pos, 8);
     /* caustics */
-    refractedTerrain *= 1. + waterDepth * pow(.6 + .5 * sin((waterDepth + wave1.x + wave2.x) * 30.), 8.);
+    refractedTerrain *= 1. + min(0.1, waterDepth) * pow(wave1.x * wave2.y + 0.75, 20.);
 
     return mix(reflectedTerrain, refractedTerrain, reflectionOrRefraction);
 }
@@ -255,6 +317,9 @@ vec3 cross(in vec3 a, in vec3 b) {
 }
 
 void main(void) {
+    //gl_FragColor = vec4(vec3(1., 1., 1.) * getHeight(vPosition * 4., 8) * .5, 1.);
+    //return;
+
     /* Calculate position of camera. */
     float groundHeight = getHeight(uPos.xy, 2);
     if (groundHeight < WATER_LEVEL) {
@@ -311,10 +376,74 @@ void main(void) {
 
 <script type="text/javascript" src="webgl.js"></script>
 <script type="text/javascript">
+
+var perlin = new Uint8Array([
+151,160,137,91,90,15,
+131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,
+190, 6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,
+88,237,149,56,87,174,20,125,136,171,168, 68,175,74,165,71,134,139,48,27,166,
+77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,
+102,143,54, 65,25,63,161, 1,216,80,73,209,76,132,187,208, 89,18,169,200,196,
+135,130,116,188,159,86,164,100,109,198,173,186, 3,64,52,217,226,250,124,123,
+5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,
+223,183,170,213,119,248,152, 2,44,154,163, 70,221,153,101,155,167, 43,172,9,
+129,22,39,253, 19,98,108,110,79,113,224,232,178,185, 112,104,218,246,97,228,
+251,34,242,193,238,210,144,12,191,179,162,241, 81,51,145,235,249,14,239,107,
+49,192,214, 31,181,199,106,157,184, 84,204,176,115,121,50,45,127, 4,150,254,
+138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180,
+151,160,137,91,90,15,
+131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,
+190, 6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,
+88,237,149,56,87,174,20,125,136,171,168, 68,175,74,165,71,134,139,48,27,166,
+77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,
+102,143,54, 65,25,63,161, 1,216,80,73,209,76,132,187,208, 89,18,169,200,196,
+135,130,116,188,159,86,164,100,109,198,173,186, 3,64,52,217,226,250,124,123,
+5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,
+223,183,170,213,119,248,152, 2,44,154,163, 70,221,153,101,155,167, 43,172,9,
+129,22,39,253, 19,98,108,110,79,113,224,232,178,185, 112,104,218,246,97,228,
+251,34,242,193,238,210,144,12,191,179,162,241, 81,51,145,235,249,14,239,107,
+49,192,214, 31,181,199,106,157,184, 84,204,176,115,121,50,45,127, 4,150,254,
+138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180
+]);
+
+var gradients = new Int8Array([
+0,1,1,0,1,-1,0,-1,1,0,-1,-1,
+1,0,1,1,0,-1,-1,0,1,-1,0,-1,
+1,1,0,1,-1,0,-1,1,0,-1,-1,0,
+1,0,-1,-1,0,-1,0,-1,1,0,1,1
+]);
+
+function makeNoiseTexture(gl) {
+    var pixels = new Uint8Array(256 * 256 * 4);
+    var offset = 0;
+    for (var i = 0; i < 256; i++) {
+	for (var j = 0; j < 256; j++) {
+	    var v1 = perlin[j + perlin[i] & 0xff];
+	    var s1 = (1 + (v1 >> 4)) / 16;
+	    v1 &= 0xf;
+	    var v2 = perlin[j + 1 + perlin[i + 1] & 0xff];
+	    var s2 = (1 + (v2 >> 4)) / 16;
+	    v2 &= 0xf;
+	    pixels[offset ++] = (gradients[v1 * 3 + 0] * s1 + 1) * 127;
+	    pixels[offset ++] = (gradients[v1 * 3 + 1] * s1 + 1) * 127;
+	    pixels[offset ++] = (gradients[v2 * 3 + 0] * s2 + 1) * 127;
+	    pixels[offset ++] = (gradients[v2 * 3 + 1] * s2 + 1) * 127;
+	}
+    }
+    var texture = gl.createTexture();
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+    return texture;
+}
+
 function effectInit(gl, shader) {
-    var texturesToLoad = 2;
-    var textureNoise;
+    var texturesToLoad = 1;
     var textureWater;
+    var textureNoise = makeNoiseTexture(gl);
 
     var textureLoaded = function() {
         if (-- texturesToLoad != 0) {
@@ -335,7 +464,6 @@ function effectInit(gl, shader) {
         effectStart(gl, shader);
     };
 
-    textureNoise = loadTexture(gl, "noise.png", textureLoaded);
     textureWater = loadTexture(gl, "watermap.png", textureLoaded);
 }
 </script>
