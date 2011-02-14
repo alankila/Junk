@@ -135,10 +135,7 @@ vec3 fbmPerlin2dDerivate(in vec2 pos, in int maxLevel) {
         w *= .5;
         pos *= 2.;
     }
-    /* Fixme: better code to convert partial derivates to normal vector. */
-    float phi = atan(o.x);
-    float theta = atan(o.y);
-    return vec3(sin(phi), sin(theta), cos(phi) * cos(theta));
+    return normalize(cross(vec3(-o.y, 0., 1.), vec3(0., -o.x, 1.)));
 }
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez. */
@@ -149,7 +146,7 @@ float fbmQuilez2d(in vec2 pos, in int maxLevel) {
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	d += n.yz * .25;
+	d += n.yz * .3;
         o += w * n.x / (1. + dot(d, d));
         if (i >= maxLevel) {
             break;
@@ -168,7 +165,7 @@ vec3 fbmQuilez2dDerivate(in vec2 pos, in int maxLevel) {
     vec2 o = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	d += n.yz * .25;
+	d += n.yz * .3;
 	o += w * n.yz / (1. + dot(d, d));
         if (i >= maxLevel) {
             break;
@@ -179,9 +176,7 @@ vec3 fbmQuilez2dDerivate(in vec2 pos, in int maxLevel) {
     }
 
     o *= 2.;
-    float phi = atan(o.x);
-    float theta = atan(o.y);
-    return vec3(sin(phi), sin(theta), cos(phi) * cos(theta));
+    return normalize(cross(vec3(-o.y, 0., 1.), vec3(0., -o.x, 1.)));
 }
 
 /* Terrain marching.
