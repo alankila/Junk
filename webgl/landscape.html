@@ -1,4 +1,4 @@
-<html><head><title>Landscape rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"/><title>Landscape rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
 #ifdef GL_ES
 precision highp float;
 #endif
@@ -19,7 +19,7 @@ varying vec2 vPosition;
 
 /* How far to subdivide modified Perlin noise.
  * (Determines how coarse the terrain is.) */
-const int MAPITERATIONS = 4;
+const int MAPITERATIONS = 6;
 /* How many march iterations per ray. */
 const int RAYITERATIONS = 256;
 /* Convert distance between ray and terrain position to "safe" advancing step. */
@@ -35,7 +35,7 @@ const float WATER_LEVEL = 0.79;
 /* Water surface precision */
 const int WATER_BISECTIONS = 4;
 /* Direction to infinitely far-away Sun */
-const vec3 SUN = vec3(0.8, 0., 0.6);
+const vec3 SUN = vec3(0.9, 0., 0.45);
 /* Sun's brightness. */
 const float SUN_INTENSITY = 8.;
 /* The camera up direction. */
@@ -85,7 +85,7 @@ vec4 fbmPerlin2d(in vec2 pos, in int maxLevel) {
     pos *= .25;
     float w = 0.5;
     vec3 o = vec3(w, 0., 0);
-    for (int i = 0; i < MAPITERATIONS; i ++) {
+    for (int i = 0; i < 8; i ++) {
         o += w * simplex2d(pos);
         if (i >= maxLevel) {
             break;
@@ -99,18 +99,18 @@ vec4 fbmPerlin2d(in vec2 pos, in int maxLevel) {
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez.
  * Output: value. */
-float fbmQuilez2d(in vec2 pos, in float param, in int maxLevel) {
+float fbmQuilez2d(in vec2 pos, in int lastIteration) {
     pos *= .25;
     float w = 0.5;
     float o = w;
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	d += n.yz * param;
-        o += w * n.x / (1. + dot(d, d));
-        if (i >= maxLevel) {
-            break;
-        }
+	d += n.yz * .5;
+        o += n.x * (w / (1. + dot(d, d)));
+	if (i == lastIteration) {
+	    break;
+	}
         w *= .5;
         pos *= 2.;
     }
@@ -120,18 +120,18 @@ float fbmQuilez2d(in vec2 pos, in float param, in int maxLevel) {
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez.
  * Output: normal. */
-vec3 fbmQuilez2dNormal(in vec2 pos, in float param, in int maxLevel) {
+vec3 fbmQuilez2dNormal(in vec2 pos, in int lastIteration) {
     pos *= .25;
     float w = 0.5;
     vec2 o = vec2(0., 0.);
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	d += n.yz * param;
-	o += w * n.yz / (1. + dot(d, d));
-        if (i >= maxLevel) {
-            break;
-        }
+	d += n.yz * .5;
+	o += n.yz * (w / (1. + dot(d, d)));
+	if (i == lastIteration) {
+	    break;
+	}
         w *= .5;
         pos *= 2.;
     }
@@ -179,7 +179,7 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
      * After distance to scene has been acquired, update LOD. */
     float t = 0.0;
     for (int i = 0; i < RAYITERATIONS; i ++) {
-        float height = pos.z - fbmQuilez2d(pos.xy, 0.3, MAPITERATIONS);
+        float height = pos.z - fbmQuilez2d(pos.xy, MAPITERATIONS);
 	
 	/* There's a trick here. Our distance estimates are not conservative;
 	 * if the ray steps into the terrain, height is negative, and the ray will
@@ -246,8 +246,9 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
  * Output: RGB. */
 vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
-    vec3 normal = fbmQuilez2dNormal(pos.xy, 0.3, MAPITERATIONS);
+    vec3 normal = fbmQuilez2dNormal(pos.xy, MAPITERATIONS);
     vec4 noise = fbmPerlin2d(pos.xy * 64., 4);
+    float grassNoise = fbmQuilez2d(pos.xy * 256., 1);
     vec4 highfreqNoise = fbmPerlin2d(pos.xy * 1024., 3);
 
     /* Sand */
@@ -256,7 +257,7 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 
     /* Grass -- if terrain is not flat, the beach is shorter */
     float beachOrGrass = smoothstep(.75, .76, pos.z - normal.z * .1);
-    vec4 grass = vec4(0.15, 0.3, 0.00, 0.) * highfreqNoise.w;
+    vec4 grass = vec4(0.1, 0.2, 0.00, 0.) * grassNoise;
     terrain = mix(terrain, grass, beachOrGrass);
 
     /* Rock: two layers of texturing and normals:
@@ -277,13 +278,11 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     terrainNormal = mix(terrainNormal, vec3(0., 0., 0.), barrenOrSnow);
    
     /* Apply lighting */
-    float shadow = max(dot(normal, SUN), 0.);
     normal = normalize(normal + terrainNormal * .4);
-    float diffuse = max(dot(normal, SUN), 0.1);
+    float diffuse = max(dot(normal, SUN), 0.2);
     vec3 reflection = 2. * normal * dot(SUN, normal) - SUN;
 
-    return terrain.xyz * diffuse
-	+ SUN_INTENSITY * terrain.w * pow(max(-dot(reflection, dir), 0.), 20.) * shadow;
+    return (terrain.xyz * diffuse + SUN_INTENSITY * terrain.w * pow(max(-dot(reflection, dir), 0.), 20.));
 
 }
 
@@ -300,6 +299,14 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
 	+ SUN_INTENSITY * sunSpecular;
 }
 
+/* Add distance fog to color.
+ * Output: RGB.
+ */
+vec3 applyFog(in vec3 color, in float distance) {
+    distance /= FOG;
+    return mix(color, vec3(.8, .8, .8), distance*distance);
+}
+
 /* Calculate water color based on reflection and refraction.
  * Output: RGB.
  */
@@ -312,25 +319,28 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     vec3 reflection = dir - 2. * normal * dot(dir, normal);
 
     /* Reflect scenery */
-    vec3 refpos = pos;
-    float reflectionLength = intersectTerrain(refpos, reflection);
-    vec3 reflectedTerrain = getTerrainColor(refpos, reflection);
+    vec3 reflectionPos = pos;
+    float reflectionLength = intersectTerrain(reflectionPos, reflection);
+    vec3 reflectedTerrain = getTerrainColor(reflectionPos, reflection);
 
     /* Add sky */
-    vec3 sky = getSkyColor(pos, reflection);
-    reflectedTerrain = mix(reflectedTerrain, sky, reflectionLength/FOG);
+    if (reflectionLength / FOG == 1.) {
+	reflectedTerrain = getSkyColor(reflectionPos, reflection);
+    } else {
+	reflectedTerrain = applyFog(reflectedTerrain, reflectionLength);
+    }
 
     /* Refract scenery (utterly fake). */
-    float waterDepth = getWaterLevel(pos) - fbmQuilez2d(pos.xy, 0.3, MAPITERATIONS);
+    float waterDepth = getWaterLevel(pos) - fbmQuilez2d(pos.xy, MAPITERATIONS);
     pos.xy += (dir.xy + normal.xy) * .5 * waterDepth;
-    pos.z = fbmQuilez2d(pos.xy, 0.3, MAPITERATIONS);
+    pos.z = fbmQuilez2d(pos.xy, MAPITERATIONS);
     vec3 refractedTerrain = getTerrainColor(pos, normal);
     /* caustics */
     refractedTerrain *= 1. + waterDepth * pow(.95 + normal.x - normal.y, 20.);
 
     return mix(reflectedTerrain, refractedTerrain, reflectionOrRefraction);
 }
-
+    
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
     return a.yzx * b.zxy - a.zxy * b.yzx;
@@ -340,12 +350,12 @@ void main(void) {
     //gl_FragColor = texture2D(uWatermap, vPosition);
     //gl_FragColor = vec4(fbmPerlin2d(vPosition*4., 0) * vec3(1., 1., 1.), 1.);
     //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2dNormal(vPosition*4., 0), 1.);
-    //gl_FragColor = vec4(fbmQuilez2d(vPosition * 8., 8) * vec3(1., 1., 1.) * .5, 1.);
-    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2dNormal(vPosition * 8., 8) * .5, 1.);
+    //gl_FragColor = vec4(fbmQuilez2d(vPosition * 8., 8) * vec3(1., 1., 1.) * .5);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2dNormal(vPosition * 8., 8) * .5);
     //return;
 
     /* Calculate position of camera. */
-    float groundHeight = fbmQuilez2d(uPos.xy, 0.3, 2);
+    float groundHeight = fbmQuilez2d(uPos.xy, 2);
     if (groundHeight < WATER_LEVEL) {
 	groundHeight = WATER_LEVEL;
     }
@@ -368,10 +378,21 @@ void main(void) {
 	terrain = getWaterColor(terrainPos, dir);
     } else {
 	terrain = getTerrainColor(terrainPos, dir);
+
+	/* add shadow: use sampling in an attempt of trying to find out the
+	 * maximum amount the ray from terrain point to sun is goes under terrain. */
+	float shadow = 0.0;
+	vec3 pos = terrainPos + texture2D(uNoise, vPosition).r * SUN * .1;
+	for (int i = 0; i < 8; i ++) {
+	    float rayHeight = fbmQuilez2d(pos.xy, 3) - terrainPos.z;
+	    pos += SUN * max(0.1, rayHeight);
+	    shadow = max(shadow, rayHeight);
+	}
+	terrain *= smoothstep(0.4, 0.0, shadow);
     }
 
     /* Distance fog. */
-    terrain = mix(terrain, vec3(.8, .8, .8), distance/FOG);
+    terrain = applyFog(terrain, distance);
 
     /* Sky */
     if (distance / FOG == 1.) {
@@ -492,7 +513,29 @@ function effectInit(gl, shader) {
 </head>
 <body>
 
+<h1>Would Iñigo Quilez like it here?</h1>
+<div>
 <canvas id="canvas" width="512" height="512"></canvas>
+</div>
+
+<p>Shown here is a 3D world rendered in fragment shader. There is no
+triangle geometry of any kind. The world is rendered instead by a terrain
+marching technique, where a distance field is iterated until a point in
+world's surface has been reached.</p>
+
+<p>The terrain is calculated by the shader from simplex noise and fractional
+brownian motion similar to the formulation proposed by Quilez. This marching
+doesn't use many octaves of noise for performance reasons; to liven the result
+up, various procedural textures are calculated and applied to the scenery based
+on height, fbm noise and surface tilt.  </p>
+
+<p>The water surface is a sum of about 40 2D sin waves, rendered with aid of
+a bumpmap calculated in JavaScript during effect's init. Note that the
+surface is real in sense that it actually has a height. The water is
+entirely colorless liquid, and its color is built from combination of
+reflection, refraction and caustics.
+</p>
+
 
 </body>
 </html>
