@@ -426,21 +426,23 @@ function makeWaterTexture(gl) {
     var waveParams = [];
     for (var wave = 0; wave < 20; wave ++) {
 	var wp = prng(1234567 ^ wave);
-	waveParams.push([wp & 0xf, (wp >> 4) & 0xf, (wp >> 8) & 0xf, (wp >> 12) & 0xf]);
+	waveParams.push([wp & 0xf, (wp >> 4) & 0xf, (wp >> 8) & 0xf, (1 + (wp >> 12) & 0xf) / 16 / 30]);
     }
 
-    var pixels = new Uint8Array(256 * 256 * 4);
+    var pixels = new Uint8Array(512 * 512 * 4);
     var offset = 0;
-    for (var i = 0; i < 256; i++) {
-	for (var j = 0; j < 256; j++) {
+    for (var i = 0; i < 512; i++) {
+	var ifact = 2 * Math.PI * i / 512;
+	for (var j = 0; j < 512; j++) {
+	    var jfact = 2 * Math.PI * j / 512;
+
 	    var m1 = 0;
 	    var m2 = 0;
 	    for (var wave = 0; wave < waveParams.length; wave ++) {
 		var pa = waveParams[wave];
-		var phase = 2 * Math.PI * (i * pa[0] + j * pa[1] + pa[2]) / 256;
-
-		m1 += Math.sin(phase) * (1 + pa[3]) / 16 / waveParams.length;
-		m2 += Math.cos(phase) * (1 + pa[3]) / 16 / waveParams.length;
+		var phase = ifact * pa[0] + jfact * pa[1] + pa[2];
+		m1 += Math.sin(phase) * pa[3];
+		m2 += Math.cos(phase) * pa[3];
 	    }
 
 	    var r = (m1 + 1) * 127;
@@ -457,7 +459,7 @@ function makeWaterTexture(gl) {
     var texture = gl.createTexture();
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     return texture;
