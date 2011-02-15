@@ -45,10 +45,8 @@ const float ONE = 1./256.;
 
 /* This function is based on the work of John Davis and Stefan Gustavson. */
 vec3 simplex2d(in vec2 P) {
-    float s = dot(P, F2);
-    vec2 Pi = floor(P + s);
-    float t = dot(Pi, G2);
-    vec2 Pf0 = P - Pi + t;
+    vec2 Pi = floor(P + dot(P, F2));
+    vec2 Pf0 = P - Pi + dot(Pi, G2);
 
     // For the 2D case, the simplex shape is an equilateral triangle.
     // Find out whether we are above or below the x=y diagonal to
@@ -65,81 +63,40 @@ vec3 simplex2d(in vec2 P) {
     vec2 grad1 = texture2D(uNoise, (Pi + o1) * ONE).rg * 2.0 - 1.0;
     vec2 grad2 = grad02.ba;
 
-    // Noise contribution from simplex origin
-    float t0 = max(0.5 - dot(Pf0, Pf0), 0.);
-    float t02 = t0 * t0;
-    float t04 = t02 * t02;
-
-    // Noise contribution from middle corner
     vec2 Pf1 = Pf0 - o1 + G2;
-    float t1 = max(0.5 - dot(Pf1, Pf1), 0.);
-    float t12 = t1 * t1;
-    float t14 = t12 * t12;
-  
-    // Noise contribution from last corner
     vec2 Pf2 = Pf0 + 2.0 * G2 - 1.0;
-    float t2 = max(0.5 - dot(Pf2, Pf2), 0.);
-    float t22 = t2 * t2;
-    float t24 = t22 * t22;
+    vec3 t = max(0.5 - vec3(dot(Pf0, Pf0), dot(Pf1, Pf1), dot(Pf2, Pf2)), 0.);
+    vec3 t2 = t * t;
+    vec3 t4 = t2 * t2;
 
-    /* Common factors in derivates and value. */
-    float t0d = 8. * t0 * t02 * dot(grad0, Pf0);
-    float t1d = 8. * t1 * t12 * dot(grad1, Pf1);
-    float t2d = 8. * t2 * t22 * dot(grad2, Pf2);
-
-    grad0 *= t04;
-    grad1 *= t14;
-    grad2 *= t24;
+    vec3 td = t * t2 * vec3(dot(grad0, Pf0), dot(grad1, Pf1), dot(grad2, Pf2));
+    float dx = 8. * dot(td, vec3(Pf0.x, Pf1.x, Pf2.x)) - dot(t4, vec3(grad0.x, grad1.x, grad2.x));
+    float dy = 8. * dot(td, vec3(Pf0.y, Pf1.y, Pf2.y)) - dot(t4, vec3(grad0.y, grad1.y, grad2.y));
 
     // Sum up and scale the result to cover the range [-.5,.5]
-    return vec3(
-	  (t0d * t0 + t1d * t1 + t2d * t2) * .125,
-
-	  t0d * Pf0.x - grad0.x
-	+ t1d * Pf1.x - grad1.x
-	+ t2d * Pf2.x - grad2.x,
-
-	  t0d * Pf0.y - grad0.y
-	+ t1d * Pf1.y - grad1.y
-	+ t2d * Pf2.y - grad2.y
-    ) * 70.;
+    return vec3(dot(td, t), dx, dy) * 70.;
 }
 
-/* Combine simplex noise to given octave. Output: 0 .. 1 */
-float fbmPerlin2d(in vec2 pos, in int maxLevel) {
+/* Combine simplex noise to given octave.
+ * Output: vec4(normalx, normaly, normalz, value) */
+vec4 fbmPerlin2d(in vec2 pos, in int maxLevel) {
     pos *= .25;
     float w = 0.5;
-    float o = w;
+    vec3 o = vec3(w, 0., 0);
     for (int i = 0; i < MAPITERATIONS; i ++) {
-        o += w * simplex2d(pos).x;
+        o += w * simplex2d(pos);
         if (i >= maxLevel) {
             break;
         }
         w *= .5;
         pos *= 2.;
     }
-    return o;
+    
+    return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
 }
 
-/* Combine simplex noise to given octave. */
-vec3 fbmPerlin2dDerivate(in vec2 pos, in int maxLevel) {
-    pos *= .25;
-    float w = 0.5;
-    vec2 o = vec2(0., 0.);
-    for (int i = 0; i < MAPITERATIONS; i ++) {
-	vec3 n = simplex2d(pos);
-	o += n.yz * w;
-        if (i >= maxLevel) {
-            break;
-        }
-        w *= .5;
-        pos *= 2.;
-    }
-
-    return normalize(cross(vec3(-1., 0., o.x), vec3(0., -1., o.y)));
-}
-
-/* Combine simplex noise to given octave with enhancement by Inigo Quilez. */
+/* Combine simplex noise to given octave with enhancement by Inigo Quilez.
+ * Output: value. */
 float fbmQuilez2d(in vec2 pos, in int maxLevel) {
     pos *= .25;
     float w = 0.5;
@@ -159,8 +116,9 @@ float fbmQuilez2d(in vec2 pos, in int maxLevel) {
     return o * 2.;
 }
 
-/* Combine simplex noise to given octave with enhancement by Inigo Quilez. */
-vec3 fbmQuilez2dDerivate(in vec2 pos, in int maxLevel) {
+/* Combine simplex noise to given octave with enhancement by Inigo Quilez.
+ * Output: normal. */
+vec3 fbmQuilez2dNormal(in vec2 pos, in int maxLevel) {
     pos *= .25;
     float w = 0.5;
     vec2 o = vec2(0., 0.);
@@ -193,6 +151,8 @@ vec3 fbmQuilez2dDerivate(in vec2 pos, in int maxLevel) {
  * The stop condition also gets progressively coarser as
  * the ray gains distance to viewer. This should naturally "antialias"
  * the scenery at distance.
+ *
+ * Output: LOD value for terrain calculation.
  */
 int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
     /* Dynamic LOD during marching:
@@ -214,13 +174,17 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
 	float absHeight = abs(height);
         maxLevel = int(LOD / (absHeight * t));
         
-        /* Are we close enough to terrain? */
-        if (absHeight < STOPCONDITION * t) {
-	    return maxLevel;
-        }
+	if (pos.z < WATER_LEVEL) {
+	    return 1;
+	}
 
         if (t > FOG) {
             break;
+        }
+
+        /* Are we close enough to terrain? */
+        if (absHeight < STOPCONDITION * t) {
+	    return maxLevel;
         }
     }
 
@@ -228,37 +192,37 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
     return 0;
 }
 
+/* Evaluate rules to find color of terrain point.
+ * Output: RGB. */
 vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
     /* Get surface properties. */
-    vec3 normal = fbmQuilez2dDerivate(pos.xy, maxLevel);
-    float noise = fbmPerlin2d(pos.xy * 64., 4);
-    vec3 noiseDerivate = fbmPerlin2dDerivate(pos.xy * 64., 4);
-    float highfreqNoise = fbmPerlin2d(pos.xy * 1024., 3);
-    vec3 highfreqNoiseDerivate = fbmPerlin2dDerivate(pos.xy * 1024., 3);
+    vec3 normal = fbmQuilez2dNormal(pos.xy, maxLevel);
+    vec4 noise = fbmPerlin2d(pos.xy * 64., 4);
+    vec4 highfreqNoise = fbmPerlin2d(pos.xy * 1024., 3);
 
     /* Sand */
-    vec4 terrain = vec4(1., 1., .5, 0.) * (.5 + .5 * highfreqNoise) * pos.z;
+    vec4 terrain = vec4(1., 1., .5, 0.) * (.5 + .5 * highfreqNoise.w) * pos.z;
     vec3 terrainNormal = vec3(0., 0., 0.);
 
     /* Grass -- if terrain is not flat, the beach is shorter */
     float beachOrGrass = smoothstep(.75, .76, pos.z - normal.z * .1);
-    vec4 grass = vec4(0.15, 0.3, 0.0, 0.) * highfreqNoise;
+    vec4 grass = vec4(0.15, 0.3, 0.0, 0.) * highfreqNoise.w;
     terrain = mix(terrain, grass, beachOrGrass);
 
     /* Rock: two layers of texturing and normals:
      * first layer is coarse world-terrain noise
      * added to it is the same high-frequency noise
      * used for sand and grass */
-    float greenOrBarren = smoothstep(.5, .6, pos.z - normal.z + noise * .2);
-    float rockStripe = (noise - 0.3) * 1.5;
+    float greenOrBarren = smoothstep(.5, .6, pos.z - normal.z + noise.w * .2);
+    float rockStripe = (noise.w - 0.3) * 1.5;
     rockStripe = rockStripe * rockStripe;
-    vec4 rock = vec4(.3, .3, .3, .1) + highfreqNoise * highfreqNoise * highfreqNoise;
+    vec4 rock = vec4(.3, .3, .3, .1) + highfreqNoise.w * highfreqNoise.w * highfreqNoise.w;
     terrain = mix(terrain, rock * rockStripe, greenOrBarren);
-    vec3 rockNormal = noiseDerivate + highfreqNoiseDerivate;
+    vec3 rockNormal = noise.xyz + highfreqNoise.xyz;
     terrainNormal = mix(terrainNormal, rockNormal, greenOrBarren);
 
     /* Snow -- height increased if terrain is not flat. */
-    float barrenOrSnow = smoothstep(2.5, 2.6, pos.z + normal.z + noise * .2);
+    float barrenOrSnow = smoothstep(2.5, 2.6, pos.z + normal.z + noise.w * .2);
     terrain = mix(terrain, vec4(1.4, 1.4, 1.4, .1), barrenOrSnow);
     terrainNormal = mix(terrainNormal, vec3(0., 0., 0.), barrenOrSnow);
    
@@ -273,18 +237,22 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
 
 }
 
-/* Render sky. */
+/* Render sky.
+ * Output: RGB.
+ */
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float sunAngle = max(dot(dir, SUN), 0.);
     float sunSpecular = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
-    float clouds = fbmPerlin2d(pos.xy + dir.xy * (8. - pos.z) / dir.z, 3);
+    float clouds = fbmPerlin2d(pos.xy + dir.xy * (8. - pos.z) / dir.z, 3).w;
     clouds *= clouds;
     return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds * dir.z) * (1. + sunAngle)
 	+ SUN_INTENSITY * sunSpecular;
 }
 
-/* Calculate water color based on reflection and refraction. */
+/* Calculate water color based on reflection and refraction.
+ * Output: RGB.
+ */
 vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     /* Calculate water surface normal. */
     vec2 wave1 = texture2D(uWatermap, pos.xy * 1.7 + vec2(uTime *.07, 0.)).xy;
@@ -320,19 +288,15 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
 
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
-    return vec3(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
-    );
+    return a.yzx * b.zxy - a.zxy * b.yzx;
 }
 
 void main(void) {
     //gl_FragColor = texture2D(uWatermap, vPosition);
     //gl_FragColor = vec4(fbmPerlin2d(vPosition*4., 0) * vec3(1., 1., 1.), 1.);
-    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2dDerivate(vPosition*4., 0), 1.);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2dNormal(vPosition*4., 0), 1.);
     //gl_FragColor = vec4(fbmQuilez2d(vPosition * 8., 8) * vec3(1., 1., 1.) * .5, 1.);
-    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2dDerivate(vPosition * 8., 8) * .5, 1.);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2dNormal(vPosition * 8., 8) * .5, 1.);
     //return;
 
     /* Calculate position of camera. */
@@ -358,7 +322,7 @@ void main(void) {
     if (terrainPos.z < WATER_LEVEL) {
 	/* Backtrack to water surface. */
 	float backtrackLength = (WATER_LEVEL - terrainPos.z) / dir.z;
-	distance -= backtrackLength;
+	distance += backtrackLength;
 	vec3 waterPos = terrainPos + dir * backtrackLength;
 	terrain = getWaterColor(waterPos, dir);
     } else {
