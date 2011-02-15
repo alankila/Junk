@@ -174,10 +174,6 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
 	float absHeight = abs(height);
         maxLevel = int(LOD / (absHeight * t));
         
-	if (pos.z < WATER_LEVEL) {
-	    return 1;
-	}
-
         if (t > FOG) {
             break;
         }
@@ -186,6 +182,11 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
         if (absHeight < STOPCONDITION * t) {
 	    return maxLevel;
         }
+	
+	if (pos.z < WATER_LEVEL) {
+	    return 1;
+	}
+
     }
 
     t = FOG;
@@ -258,7 +259,9 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     vec2 wave1 = texture2D(uWatermap, pos.xy * 1.7 + vec2(uTime *.07, 0.)).xy;
     vec2 wave2 = texture2D(uWatermap, pos.xy + vec2(0., uTime *.11)).xy;
     vec2 waves = wave1 - wave2;
-    vec3 normal = vec3(waves, 1.0 - sqrt(dot(waves, waves)));
+    float waveStrength = dot(waves, waves);
+
+    vec3 normal = vec3(waves, 1.0 - sqrt(waveStrength));
 
     /* Fresnel equation approximation */
     float reflectionOrRefraction = max(-dot(dir, normal), 0.);
