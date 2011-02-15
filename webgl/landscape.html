@@ -19,11 +19,11 @@ varying vec2 vPosition;
 
 /* How far to subdivide modified Perlin noise.
  * (Determines how coarse the terrain is.) */
-const int MAPITERATIONS = 8;
+const int MAPITERATIONS = 4;
 /* How many march iterations per ray. */
 const int RAYITERATIONS = 256;
 /* Convert distance between ray and terrain position to "safe" advancing step. */
-const float MARCH_SPEED = 0.4;
+const float MARCH_SPEED = 0.5;
 /* Level Of Detail: how far to render until dropping terrain features. */
 const float LOD = 2.0;
 /* When ray reaches close enough to terrain, stop marching */
@@ -31,7 +31,9 @@ const float STOPCONDITION = 0.0025;
 /* Render distance. */
 const float FOG = 5.;
 /* Water level */
-const float WATER_LEVEL = 0.8;
+const float WATER_LEVEL = 0.79;
+/* Water surface precision */
+const int WATER_BISECTIONS = 4;
 /* Direction to infinitely far-away Sun */
 const vec3 SUN = vec3(0.8, 0., 0.6);
 /* Sun's brightness. */
@@ -97,14 +99,14 @@ vec4 fbmPerlin2d(in vec2 pos, in int maxLevel) {
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez.
  * Output: value. */
-float fbmQuilez2d(in vec2 pos, in int maxLevel) {
+float fbmQuilez2d(in vec2 pos, in float param, in int maxLevel) {
     pos *= .25;
     float w = 0.5;
     float o = w;
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	d += n.yz * .3;
+	d += n.yz * param;
         o += w * n.x / (1. + dot(d, d));
         if (i >= maxLevel) {
             break;
@@ -118,14 +120,14 @@ float fbmQuilez2d(in vec2 pos, in int maxLevel) {
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez.
  * Output: normal. */
-vec3 fbmQuilez2dNormal(in vec2 pos, in int maxLevel) {
+vec3 fbmQuilez2dNormal(in vec2 pos, in float param, in int maxLevel) {
     pos *= .25;
     float w = 0.5;
     vec2 o = vec2(0., 0.);
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < MAPITERATIONS; i ++) {
         vec3 n = simplex2d(pos);
-	d += n.yz * .3;
+	d += n.yz * param;
 	o += w * n.yz / (1. + dot(d, d));
         if (i >= maxLevel) {
             break;
@@ -136,6 +138,24 @@ vec3 fbmQuilez2dNormal(in vec2 pos, in int maxLevel) {
 
     o *= 2.;
     return normalize(cross(vec3(-1., 0., o.x), vec3(0., -1., o.y)));
+}
+
+vec4 getWaterTexture(in vec3 pos) {
+    vec4 wave1 = texture2D(uWatermap, pos.xy * 1.7 + vec2(uTime *.07, 0.));
+    vec4 wave2 = texture2D(uWatermap, pos.xy + vec2(0., uTime *.11));
+    return wave1 - wave2;
+}
+
+/* Get water normal */
+vec3 getWaterNormal(in vec3 pos) {
+    vec2 waves = getWaterTexture(pos).xy;
+    return vec3(waves, 1.0 - sqrt(dot(waves, waves)));
+}
+
+/* Get water level */
+float getWaterLevel(in vec3 pos) {
+    float ripple = getWaterTexture(pos).z;
+    return WATER_LEVEL - ripple * .1;
 }
 
 /* Terrain marching.
@@ -154,15 +174,13 @@ vec3 fbmQuilez2dNormal(in vec2 pos, in int maxLevel) {
  *
  * Output: LOD value for terrain calculation.
  */
-int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
+float intersectTerrain(inout vec3 pos, in vec3 dir) {
     /* Dynamic LOD during marching:
      * After distance to scene has been acquired, update LOD. */
-    t = 0.0;
-    int maxLevel = MAPITERATIONS;
-    
+    float t = 0.0;
     for (int i = 0; i < RAYITERATIONS; i ++) {
-        float height = pos.z - fbmQuilez2d(pos.xy, maxLevel);
-
+        float height = pos.z - fbmQuilez2d(pos.xy, 0.3, MAPITERATIONS);
+	
 	/* There's a trick here. Our distance estimates are not conservative;
 	 * if the ray steps into the terrain, height is negative, and the ray will
          * backtrack automatically. */
@@ -170,34 +188,65 @@ int intersectTerrain(inout vec3 pos, in vec3 dir, out float t) {
         t += distanceEstimate;
         pos += distanceEstimate * dir;
 
-	/* Dynamic level of detail. */
-	float absHeight = abs(height);
-        maxLevel = int(LOD / (absHeight * t));
-        
         if (t > FOG) {
-            break;
+	    t = FOG;
+	    break;
         }
 
         /* Are we close enough to terrain? */
+	float absHeight = abs(height);
         if (absHeight < STOPCONDITION * t) {
-	    return maxLevel;
+	    break;
         }
-	
-	if (pos.z < WATER_LEVEL) {
-	    return 1;
+
+	float waterLevel = getWaterLevel(pos);
+	if (pos.z < waterLevel) {
+	    /* underwater; find intersection point. */
+
+	    /* Initial brackets: earlier iteration was above,
+	     * this one is below. Therefore, there must be an
+	     * intersection point. */
+	    float b = t;
+	    float a = t - distanceEstimate;
+
+	    for (int i = 0; i < WATER_BISECTIONS; i ++) {
+		/* Estimate distance to water. */
+		float underwaterLength = (waterLevel - pos.z) / dir.z;
+		float t2 = t + underwaterLength;
+
+		/* Is the new root outside the established brackets? */
+		if (t2 < a || t2 > b) {
+		    /* Try again at range midpoint. */
+		    waterLevel = getWaterLevel(pos);
+		    t2 = (a + b) * .5;
+		}
+
+		pos += dir * (t2 - t);
+		t = t2;
+		waterLevel = getWaterLevel(pos);
+		
+		/* Discover root brackets as we go. */
+		if (waterLevel < pos.z) {
+		    a = t;
+		} else {
+		    b = t;
+		}
+
+	    }
+	    pos.z = waterLevel;
+	    break;
 	}
 
     }
 
-    t = FOG;
-    return 0;
+    return t;
 }
 
 /* Evaluate rules to find color of terrain point.
  * Output: RGB. */
-vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
+vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
-    vec3 normal = fbmQuilez2dNormal(pos.xy, maxLevel);
+    vec3 normal = fbmQuilez2dNormal(pos.xy, 0.3, MAPITERATIONS);
     vec4 noise = fbmPerlin2d(pos.xy * 64., 4);
     vec4 highfreqNoise = fbmPerlin2d(pos.xy * 1024., 3);
 
@@ -207,7 +256,7 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir, in int maxLevel) {
 
     /* Grass -- if terrain is not flat, the beach is shorter */
     float beachOrGrass = smoothstep(.75, .76, pos.z - normal.z * .1);
-    vec4 grass = vec4(0.15, 0.3, 0.0, 0.) * highfreqNoise.w;
+    vec4 grass = vec4(0.15, 0.3, 0.00, 0.) * highfreqNoise.w;
     terrain = mix(terrain, grass, beachOrGrass);
 
     /* Rock: two layers of texturing and normals:
@@ -255,13 +304,7 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
  * Output: RGB.
  */
 vec3 getWaterColor(in vec3 pos, in vec3 dir) {
-    /* Calculate water surface normal. */
-    vec2 wave1 = texture2D(uWatermap, pos.xy * 1.7 + vec2(uTime *.07, 0.)).xy;
-    vec2 wave2 = texture2D(uWatermap, pos.xy + vec2(0., uTime *.11)).xy;
-    vec2 waves = wave1 - wave2;
-    float waveStrength = dot(waves, waves);
-
-    vec3 normal = vec3(waves, 1.0 - sqrt(waveStrength));
+    vec3 normal = getWaterNormal(pos);
 
     /* Fresnel equation approximation */
     float reflectionOrRefraction = max(-dot(dir, normal), 0.);
@@ -270,21 +313,20 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
 
     /* Reflect scenery */
     vec3 refpos = pos;
-    float outLength; 
-    int reflectionLevel = intersectTerrain(refpos, reflection, outLength);
-    vec3 reflectedTerrain = getTerrainColor(refpos, reflection, reflectionLevel);
+    float reflectionLength = intersectTerrain(refpos, reflection);
+    vec3 reflectedTerrain = getTerrainColor(refpos, reflection);
 
     /* Add sky */
     vec3 sky = getSkyColor(pos, reflection);
-    reflectedTerrain = mix(reflectedTerrain, sky, outLength/FOG);
+    reflectedTerrain = mix(reflectedTerrain, sky, reflectionLength/FOG);
 
     /* Refract scenery (utterly fake). */
-    float waterDepth = WATER_LEVEL - fbmQuilez2d(pos.xy, 4);
-    pos.xy -= waves * waterDepth;
-    pos.z = fbmQuilez2d(pos.xy, 4);
-    vec3 refractedTerrain = getTerrainColor(pos, normal, 8);
+    float waterDepth = getWaterLevel(pos) - fbmQuilez2d(pos.xy, 0.3, MAPITERATIONS);
+    pos.xy += (dir.xy + normal.xy) * .5 * waterDepth;
+    pos.z = fbmQuilez2d(pos.xy, 0.3, MAPITERATIONS);
+    vec3 refractedTerrain = getTerrainColor(pos, normal);
     /* caustics */
-    refractedTerrain *= 1. + min(0.1, waterDepth) * pow(wave1.x * wave2.y + 0.75, 20.);
+    refractedTerrain *= 1. + waterDepth * pow(.95 + normal.x - normal.y, 20.);
 
     return mix(reflectedTerrain, refractedTerrain, reflectionOrRefraction);
 }
@@ -303,7 +345,7 @@ void main(void) {
     //return;
 
     /* Calculate position of camera. */
-    float groundHeight = fbmQuilez2d(uPos.xy, 2);
+    float groundHeight = fbmQuilez2d(uPos.xy, 0.3, 2);
     if (groundHeight < WATER_LEVEL) {
 	groundHeight = WATER_LEVEL;
     }
@@ -316,20 +358,16 @@ void main(void) {
     dir = normalize(dir);
     
     /* Terrain march. */
-    float distance;
     vec3 terrainPos = cameraPos;
-    int maxLevel = intersectTerrain(terrainPos, dir, distance);
+    float distance = intersectTerrain(terrainPos, dir);
+    float waterLevel = getWaterLevel(terrainPos);
 
     /* Blend water if under water level. */
     vec3 terrain;
-    if (terrainPos.z < WATER_LEVEL) {
-	/* Backtrack to water surface. */
-	float backtrackLength = (WATER_LEVEL - terrainPos.z) / dir.z;
-	distance += backtrackLength;
-	vec3 waterPos = terrainPos + dir * backtrackLength;
-	terrain = getWaterColor(waterPos, dir);
+    if (terrainPos.z == waterLevel) {
+	terrain = getWaterColor(terrainPos, dir);
     } else {
-	terrain = getTerrainColor(terrainPos, dir, maxLevel);
+	terrain = getTerrainColor(terrainPos, dir);
     }
 
     /* Distance fog. */
@@ -403,22 +441,20 @@ function makeWaterTexture(gl) {
 	for (var j = 0; j < 512; j++) {
 	    var jfact = 2 * Math.PI * j / 512;
 
-	    var m1 = 0;
-	    var m2 = 0;
+	    var dx = 0;
+	    var dy = 0;
+	    var z = 0;
 	    for (var wave = 0; wave < waveParams.length; wave ++) {
 		var pa = waveParams[wave];
 		var phase = ifact * pa[0] + jfact * pa[1] + pa[2];
-		m1 += Math.sin(phase) * pa[3];
-		m2 += Math.cos(phase) * pa[3];
+		dx += Math.sin(phase) * pa[3];
+		dy += Math.cos(phase) * pa[3];
 	    }
 
-	    var r = (m1 + 1) * 127;
-	    var g = (m2 + 1) * 127;
-	    var b = (2 - Math.sqrt(r * r + g * g)) * 127;
-
-	    pixels[offset ++] = Math.round(r);
-	    pixels[offset ++] = Math.round(g);
-	    pixels[offset ++] = Math.round(b);
+	    var z = dx - dy;
+	    pixels[offset ++] = Math.round((dx + 1) * 127);
+	    pixels[offset ++] = Math.round((dy + 1) * 127);
+	    pixels[offset ++] = Math.round(( z + 1) * 127);
 	    pixels[offset ++] = 0xff;
 	}
     }
