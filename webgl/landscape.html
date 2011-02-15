@@ -389,7 +389,7 @@ function makeNoiseTexture(gl) {
 function makeWaterTexture(gl) {
     var waveParams = [];
     for (var wave = 0; wave < 20; wave ++) {
-	var wp = prng(1234567 ^ wave);
+	var wp = prng(1234 ^ wave);
 	waveParams.push([wp & 0xf, (wp >> 4) & 0xf, (wp >> 8) & 0xf, (1 + (wp >> 12) & 0xf) / 16 / 30]);
     }
 
