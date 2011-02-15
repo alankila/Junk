@@ -96,6 +96,7 @@ var effectStart = function(gl, shader) {
     var mouseX = 0.5;
     var mouseY = 0.5;
 
+    var canvas = document.getElementById("canvas");
     canvas.onmousemove = function(event) {
         mouseX = event.pageX / this.width;
         mouseY = event.pageY / this.height;
