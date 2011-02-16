@@ -1,0 +1,139 @@
+<html><head><title>Mandelbox rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* System's clock, for running animations. */
+uniform float uTime;
+/* Position of camera. */
+uniform vec3 uPos;
+/* Lookat of camera. */
+uniform vec3 uDir;
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+
+const int RAYITERATIONS = 256;
+
+const vec3 UP = vec3(0., 0., 1.);
+
+const vec3 LIGHT = vec3(0.707, 0., 0.707);
+
+const int ITERATIONS = 10;
+
+/* Cross product. */
+vec3 cross(in vec3 a, in vec3 b) {
+    return a.yzx * b.zxy - a.zxy * b.yzx;
+}
+
+/* From Mandelbulb.pbk, MIT license (c) 2009 Tom Beddard, Chris King. */
+float testPoint(vec3 c, inout float orbit) {
+    // Convert z to polar coordinates
+    vec3 z = c;
+    float R = length(c);
+    float th = atan(c.y, c.x);
+    float ph = acos(c.z / R);
+	
+    float ph_dz = 0.0;
+    float th_dz = 0.0;
+    float R_dz  = 1.0;
+
+    vec3 dz;
+
+    // Iterate to compute the distance estimator.
+    for (int i = 0; i < ITERATIONS; i ++) {
+	// Calculate derivative of 
+	float powR = 8. * pow(R, 7.);
+	float powRsin = powR * R_dz * sin(ph_dz + 7.*ph);
+	dz.x = powRsin * cos(th_dz + 7.*th) + 1.0;
+	dz.y = powRsin * sin(th_dz + 7.*th);
+	dz.z = powR * R_dz * cos(ph_dz + 7.*ph);
+	    
+	// polar coordinates of derivative dz
+	R_dz  = length(dz);
+	th_dz = atan(dz.y, dz.x);
+	ph_dz = acos(dz.z / R_dz);
+	    
+	// z iteration
+	powRsin = sin(8.*ph);
+	z = c + pow(R, 8.) * vec3(powRsin * cos(8.*th), powRsin * sin(8.*th), cos(8.*ph));
+
+	R  = length(z);
+	th = atan(z.y, z.x);
+	ph = acos(z.z / R);
+
+	if (R < orbit) {
+	    orbit = R;
+	}
+
+	if (R > 4.0) {
+	    break;
+	}
+    }
+    
+    // Return the distance estimation value which determines the next raytracing
+    // step size, or if whether we are within the threshold of the surface.
+    return .5 * R * log(R) / R_dz;
+}
+
+vec3 intersectMandelbulb(inout vec3 pos, in vec3 dir) {
+    float t = 0.;
+    float s = 0.002;
+    float ao = 1.0;
+    for (int j = 0; j < RAYITERATIONS; j ++) {
+	if (dot(pos, pos) > 9.0) {
+	    pos += dir;
+	    t += 1.;
+	    continue;
+	}
+
+	float distance = testPoint(pos, ao);
+        pos += distance * dir;
+	t += distance;
+
+	if (distance < s * t) {
+	    vec3 objColor = vec3(1., 1., 1.) * ao;
+	    return objColor / (1. + t * t);
+	}
+    }
+
+    return vec3(0., 0., 0.);
+}
+
+void main(void) {
+    /* Calculate an orthonormal base for rendering. */
+    vec3 left = normalize(cross(UP, uDir));
+    vec3 up = cross(uDir, left);
+
+    vec3 pos = vec3(0.1, 1.2, 0.) + uPos;
+    vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+    dir = normalize(dir);
+
+    vec3 color = intersectMandelbulb(pos, dir);
+    gl_FragColor = vec4(sqrt(color), 1.);
+}
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+function effectInit(gl, shader) {
+    effectStart(gl, shader);
+}
+</script>
+</head>
+<body>
+
+<canvas id="canvas" width="512" height="512"></canvas>
+
+</body>
+</html>
