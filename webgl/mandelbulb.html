@@ -1,4 +1,4 @@
-<html><head><title>Mandelbox rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+<html><head><title>Mandelbulb rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
 #ifdef GL_ES
 precision highp float;
 #endif
@@ -18,81 +18,82 @@ const vec3 UP = vec3(0., 0., 1.);
 
 const vec3 LIGHT = vec3(0.707, 0., 0.707);
 
-const int ITERATIONS = 10;
+const int ITERATIONS = 16;
 
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
     return a.yzx * b.zxy - a.zxy * b.yzx;
 }
 
-/* From Mandelbulb.pbk, MIT license (c) 2009 Tom Beddard, Chris King. */
 float testPoint(vec3 c, inout float orbit) {
-    // Convert z to polar coordinates
     vec3 z = c;
-    float R = length(c);
-    float th = atan(c.y, c.x);
-    float ph = acos(c.z / R);
-	
-    float ph_dz = 0.0;
-    float th_dz = 0.0;
-    float R_dz  = 1.0;
-
-    vec3 dz;
 
     // Iterate to compute the distance estimator.
+    int iterations = ITERATIONS;
+    float zl;
     for (int i = 0; i < ITERATIONS; i ++) {
-	// Calculate derivative of 
-	float powR = 8. * pow(R, 7.);
-	float powRsin = powR * R_dz * sin(ph_dz + 7.*ph);
-	dz.x = powRsin * cos(th_dz + 7.*th) + 1.0;
-	dz.y = powRsin * sin(th_dz + 7.*th);
-	dz.z = powR * R_dz * cos(ph_dz + 7.*ph);
-	    
-	// polar coordinates of derivative dz
-	R_dz  = length(dz);
-	th_dz = atan(dz.y, dz.x);
-	ph_dz = acos(dz.z / R_dz);
-	    
-	// z iteration
-	powRsin = sin(8.*ph);
-	z = c + pow(R, 8.) * vec3(powRsin * cos(8.*th), powRsin * sin(8.*th), cos(8.*ph));
+	vec3 z2 = z * z;
+	vec3 z4 = z2 * z2;
 
-	R  = length(z);
-	th = atan(z.y, z.x);
-	ph = acos(z.z / R);
+	float k3 = z2.x + z2.z;
+	float k32 = k3 * k3;
+	float k34 = k32 * k32;
+	float k2 = inversesqrt(k34 * k32 * k3);
+	float k1 = z4.x + z4.y + z4.z - 6.0*z2.y*z2.z - 6.0*z2.x*z2.y + 2.0*z2.z*z2.x;
+	float k4 = z2.x - z2.y + z2.z;
 
-	if (R < orbit) {
-	    orbit = R;
+	z = c + vec3(
+	    64.0*z.x*z.y*z.z*(z2.x-z2.z)*k4*(z4.x-6.0*z2.x*z2.z+z4.z)*k1*k2,
+	    -16.0*z2.y*k3*k4*k4 + k1*k1,
+	    -8.0*z.y*k4*(z4.x*z4.x - 28.0*z4.x*z2.x*z2.z + 70.0*z4.x*z4.z - 28.0*z2.x*z2.z*z4.z + z4.z*z4.z)*k1*k2
+	);
+
+	zl = dot(z, z);
+	if (zl < orbit) {
+	    orbit = zl;
 	}
 
-	if (R > 4.0) {
+	if (zl > 100.0) {
+	    iterations = i;
 	    break;
 	}
     }
-    
+   
     // Return the distance estimation value which determines the next raytracing
     // step size, or if whether we are within the threshold of the surface.
-    return .5 * R * log(R) / R_dz;
+    return .5 * log(zl) / pow(8., float(iterations));
 }
 
 vec3 intersectMandelbulb(inout vec3 pos, in vec3 dir) {
-    float t = 0.;
-    float s = 0.002;
-    float ao = 1.0;
+    float t = 0.1;
+    float s = 0.0005;
     for (int j = 0; j < RAYITERATIONS; j ++) {
+	/* Outside the fractal region? */
 	if (dot(pos, pos) > 9.0) {
 	    pos += dir;
 	    t += 1.;
 	    continue;
 	}
 
-	float distance = testPoint(pos, ao);
+	float ao = 1., aoignore;
+	float p  = testPoint(pos, ao);
+	float px = testPoint(pos + vec3(s, 0., 0.), aoignore);
+	float py = testPoint(pos + vec3(0., s, 0.), aoignore);
+	float pz = testPoint(pos + vec3(0., 0., s), aoignore);
+	vec3 d = (vec3(px, py, pz) - p) / s;
+
+	float distance = .5 * p / length(d);
         pos += distance * dir;
 	t += distance;
 
 	if (distance < s * t) {
-	    vec3 objColor = vec3(1., 1., 1.) * ao;
-	    return objColor / (1. + t * t);
+	    d = normalize(d);
+	    float diffuse = max(dot(d, LIGHT), 0.);
+	    float specular = max(dot(reflect(LIGHT, d), dir), 0.);
+	    float color = clamp(p / distance * .2, 0., 1.);
+	    vec3 objColor = vec3(color, 2. * color * (1.-color), 1.-color);
+	    return (objColor * diffuse * ao
+		    + diffuse * pow(specular, 20.)) / (1. + t * t);
 	}
     }
 
