@@ -171,12 +171,6 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
 	    break;
         }
 
-        /* Are we close enough to terrain? */
-	float absHeight = abs(height);
-        if (absHeight < STOPCONDITION * t) {
-	    break;
-        }
-
 	float waterLevel = getWaterLevel(pos);
 	if (pos.z < waterLevel) {
 	    /* underwater; find intersection point. */
@@ -211,9 +205,17 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
 		}
 
 	    }
+	    
 	    pos.z = waterLevel;
 	    break;
 	}
+
+        /* Are we close enough to terrain? */
+	float absHeight = abs(height);
+        if (absHeight < STOPCONDITION * t) {
+	    pos.z = fbmQuilez2d(pos.xy * .5, MAPITERATIONS).w;
+	    break;
+        }
 
     }
 
@@ -227,14 +229,18 @@ float calculateShade(in vec3 pos) {
     /* add shadow: use sampling in an attempt of trying to find out the
      * maximum amount the ray from terrain point to sun is goes under terrain. */
     float shadow = 0.;
-    pos += texture2D(uNoise, vPosition).r * SUN * .2;
-    for (int i = 0; i < 4; i ++) {
+    float t = 0.01;
+    for (int i = 0; i < 5; i ++) {
 	/* Positive -> above ground. */
-	float rayHeight = pos.z - fbmQuilez2d(pos.xy * .5, MAPITERATIONS).w;
-	pos += SUN * max(0.2, rayHeight);
-	shadow = min(shadow, rayHeight);
+	vec3 testpos = pos + SUN * t;
+	float rayHeight = testpos.z - fbmQuilez2d(testpos.xy * .5, MAPITERATIONS).w;
+	float inShadow = rayHeight / t - .1;
+	if (inShadow < 0.) {
+	    shadow += inShadow;
+	}
+	t *= 2.;
     }
-    return 1. - clamp(shadow * -5., 0., 1.);
+    return mix(smoothstep(-0.5, 0., shadow), 1., .2);
 }
 
 /* Evaluate rules to find color of terrain point.
