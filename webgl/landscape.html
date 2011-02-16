@@ -19,7 +19,9 @@ varying vec2 vPosition;
 
 /* How far to subdivide modified Perlin noise.
  * (Determines how coarse the terrain is.) */
-const int MAPITERATIONS = 5;
+const int MAPITERATIONS = 4;
+/* Parameter for Quilez's noise generator. */
+const float MAPSPIKES = 0.3;
 /* How many march iterations per ray. */
 const int RAYITERATIONS = 256;
 /* Convert distance between ray and terrain position to "safe" advancing step. */
@@ -85,7 +87,7 @@ vec3 simplex2d(in vec2 P) {
 vec4 fbmPerlin2d(in vec2 pos, in int lastIteration) {
     float w = 0.5;
     vec3 o = vec3(w, 0., 0);
-    for (int i = 0; i < 8; i ++) {
+    for (int i = 0; i < 16; i ++) {
         o += w * simplex2d(pos);
         if (i == lastIteration) {
             break;
@@ -99,13 +101,13 @@ vec4 fbmPerlin2d(in vec2 pos, in int lastIteration) {
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez.
  * Output: vec4(normalx, normaly, normalz, value) */
-vec4 fbmQuilez2d(in vec2 pos, in int lastIteration) {
+vec4 fbmQuilez2d(in vec2 pos, in float spikiness, in int lastIteration) {
     float w = 0.5;
     vec3 o = vec3(w, 0., 0.);
     vec2 d = vec2(0., 0.);
-    for (int i = 0; i < MAPITERATIONS; i ++) {
+    for (int i = 0; i < 16; i ++) {
         vec3 n = simplex2d(pos);
-	d += n.yz * .4;
+	d += n.yz * spikiness;
 	float wf = w / (1. + dot(d, d));
         o += wf * n;
 	if (i == lastIteration) {
@@ -157,7 +159,7 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
      * After distance to scene has been acquired, update LOD. */
     float t = 0.0;
     for (int i = 0; i < RAYITERATIONS; i ++) {
-        float height = pos.z - fbmQuilez2d(pos.xy * .5, MAPITERATIONS).w;
+        float height = pos.z - fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
 	
 	/* There's a trick here. Our distance estimates are not conservative;
 	 * if the ray steps into the terrain, height is negative, and the ray will
@@ -213,7 +215,7 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
         /* Are we close enough to terrain? */
 	float absHeight = abs(height);
         if (absHeight < STOPCONDITION * t) {
-	    pos.z = fbmQuilez2d(pos.xy * .5, MAPITERATIONS).w;
+	    pos.z = fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
 	    break;
         }
 
@@ -233,65 +235,63 @@ float calculateShade(in vec3 pos) {
     for (int i = 0; i < 5; i ++) {
 	/* Positive -> above ground. */
 	vec3 testpos = pos + SUN * t;
-	float rayHeight = testpos.z - fbmQuilez2d(testpos.xy * .5, MAPITERATIONS).w;
+	float rayHeight = testpos.z - fbmQuilez2d(testpos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
 	float inShadow = rayHeight / t - .1;
 	if (inShadow < 0.) {
 	    shadow += inShadow;
 	}
 	t *= 2.;
     }
-    return mix(smoothstep(-0.5, 0., shadow), 1., .2);
+    return smoothstep(-0.5, 0., shadow);
 }
 
 /* Evaluate rules to find color of terrain point.
  * Output: RGB. */
 vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
-    vec3 normal = fbmQuilez2d(pos.xy * .5, MAPITERATIONS).xyz;
-    vec4 noise = fbmPerlin2d(pos.xy * 128., 4);
-    vec4 highfreqNoise = fbmPerlin2d(pos.xy * 1024., 3);
+    vec3 normal = fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).xyz;
+    vec4 noise = fbmQuilez2d(pos.xy * 8., 1.0, 12);
 
-    /* Sand */
-    vec4 terrain = vec4(1., 1., .5, 0.) * (.5 + .5 * highfreqNoise.w) * pos.z;
-    vec3 terrainNormal = vec3(0., 0., 0.);
+    /* Tilt the coarse surface with detail texture. */
+    normal = normalize(normal + noise.xyz * noise.w);
+    
+    /* Determine terrain type. */
+    float overWater = smoothstep(WATER_LEVEL, WATER_LEVEL + 0.1, pos.z);
+    float sandOrRock = smoothstep(0.84, 0.8, normal.z - pos.z * .25 - overWater);
+    float rockOrSnow = smoothstep(1.0, 1.02, normal.z + pos.z * .1) * overWater;
 
-    /* Rock: two layers of texturing and normals:
-     * first layer is coarse world-terrain noise
-     * added to it is the same high-frequency noise
-     * used for sand and grass */
-    float sandOrRock = smoothstep(0.65, 0.62, normal.z - pos.z * .5 - noise.w * .1);
-    float rockStripe = (noise.w - 0.3) * 1.5;
-    rockStripe = rockStripe * rockStripe;
-    vec4 rock = vec4(.3, .3, .3, .05) + highfreqNoise.w * highfreqNoise.w * highfreqNoise.w;
-    terrain = mix(terrain, rock * rockStripe, sandOrRock);
-    vec3 rockNormal = noise.xyz + highfreqNoise.xyz;
-    terrainNormal = mix(terrainNormal, rockNormal, sandOrRock);
+    /* Sand texture */
+    vec4 terrain = vec4(1.0, 1.0, 0.6, 0.) * pos.z;
+
+    /* Rock texture */
+    vec4 rockNoise = fbmPerlin2d(pos.xy * 512., 1);
+    vec4 rockTexture = vec4(.2, .16, .10, 0.) * sqrt(noise.w);
+    rockTexture += vec4(.1, .05, .02, 0.02) * rockNoise.w * rockNoise.w;
+    terrain = mix(terrain, rockTexture, sandOrRock);
+    normal = mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1);
 
     /* Snow -- height increased if terrain is not flat. */
-    float rockOrSnow = smoothstep(1.2, 1.25, pos.z + normal.z * .5 - noise.w * .1);
-    terrain = mix(terrain, vec4(1.4, 1.4, 1.4, .1), rockOrSnow);
-    terrainNormal = mix(terrainNormal, vec3(0., 0., 0.), rockOrSnow);
+    terrain = mix(terrain, vec4(1.4, 1.4, 1.4, .5), rockOrSnow);
    
     /* Foliage: if not under water, or above snow line, and terrain tilt is suitable. */
-    float foliage =
-	step(WATER_LEVEL, pos.z + normal.z * .1 - noise.w * .1 - .05)
-	* step(0.8, normal.z - noise.w * .1)
-	* (1. - smoothstep(1.4, 1.5, pos.z + normal.z - noise.w * .1));
-    vec4 grassNoise = fbmQuilez2d(pos.xy * 128., 1);
-    vec4 grass = vec4(0.1, 0.2, 0.00, 0.) * grassNoise.w;
-    terrain = mix(terrain, grass, foliage);
-    terrainNormal = mix(terrainNormal, grassNoise.xyz, foliage);
+    /*float foliage =
+	step(WATER_LEVEL, pos.z + normal.z * .1 - .05)
+	* step(0.8, normal.z)
+	* (1. - smoothstep(1.4, 1.5, pos.z + normal.z));
+    vec4 grass = vec4(0.1, 0.2, 0.00, 0.);
+    terrain = mix(terrain, grass, foliage);*/
 
     /* Apply lighting */
-    normal = normalize(normal + terrainNormal * .4);
+    normal = normalize(normal);
     float diffuse = max(dot(normal, SUN), 0.2);
     vec3 reflection = reflect(SUN, normal);
 
     float specular = max(dot(reflection, dir), 0.);
+    float shade = calculateShade(pos);
 
-    return (terrain.xyz * diffuse
-	    + SUN_INTENSITY * terrain.w * pow(specular, 20.))
-		* calculateShade(pos);
+    return mix(shade, 1., 0.2) *
+	(terrain.xyz * diffuse
+	 + shade * SUN_INTENSITY * terrain.w * pow(specular, 20.));
 }
 
 /* Render sky.
@@ -339,9 +339,9 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     }
 
     /* Refract scenery (utterly fake). */
-    float waterDepth = getWaterLevel(pos) - fbmQuilez2d(pos.xy * .5, MAPITERATIONS).w;
+    float waterDepth = getWaterLevel(pos) - fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
     pos.xy += refract(dir, normal, 0.7).xy * waterDepth;
-    pos.z = fbmQuilez2d(pos.xy * .5, MAPITERATIONS).w;
+    pos.z = fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
     vec3 refractedTerrain = getTerrainColor(pos, normal);
     /* Caustics */
     refractedTerrain *= 1. + waterDepth * pow(1.0 + normal.x - normal.y, 20.);
@@ -364,7 +364,7 @@ void main(void) {
     //return;
 
     /* Calculate position of camera. */
-    float groundHeight = fbmQuilez2d(uPos.xy * .5, MAPITERATIONS).w;
+    float groundHeight = fbmQuilez2d(uPos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
     if (groundHeight < WATER_LEVEL) {
 	groundHeight = WATER_LEVEL;
     }
@@ -537,12 +537,9 @@ on height, fbm noise and surface tilt. The rules are roughly as follows:
 </p>
 
 <ul>
-<li>Everything below certain level is water.</li>
+<li>The world is rock by default.</li>
 <li>Sand is ground rock, water grinds rock into sand, and sand tends to flow downhill.
     Therefore sand exists close to water and where surface tilt is not very large.</li>
-<li>Foliage can cover either sand or rock. Foliage prefers suitable altitude,
-    closer to water but usually above it, and only very small surface tilt.
-</li>
 <li>Snow is wherever surface tilt is low and height is high.</li>
 </ul>
 
