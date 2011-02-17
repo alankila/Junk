@@ -303,25 +303,20 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 
 float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
     float opacity = 0.;
-    darkness = 1.;
     vec3 pos = vec3(spos, 0.);
-    for (int j = 0; j < 8; j ++) {
+    darkness = 1. - fbmPerlin2d(pos.xy, 5).w * .5;
+    for (int j = 0; j < 6; j ++) {
 	float o = fbmPerlin2d(pos.xy, 5).w;
 
 	/* is there cloud above the ray? */
 	float dz = (o - pos.z - 0.5) * .5;
 	float step = max(0.03, abs(dz) * MARCH_SPEED);
-	if (dz > 0.) {
-	    opacity += min(dz, step);
-	    darkness -= dz * step;
-	}
+	opacity += max(dz, 0.);
 
 	pos += dir * step;
 	if (pos.z > 1.) {
 	    break;
 	}
-
-	step *= 2.;
     }
 
     return opacity;
@@ -339,10 +334,14 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     vec3 skyColor = (vec3(skyBrightness, skyBrightness, 1.) * .1 + sunDisc);
 
     float cloudTotal = 0.;
-    vec2 cloudCoord = pos.xy + dir.xy * (1.5 - pos.z) / dir.z;
+    float t = (1.5 - pos.z) / dir.z;
+
+    vec2 cloudCoord = pos.xy + dir.xy * t;
     float darkness;
-    float cloudOpacity = getCloudOpacity(cloudCoord, dir, darkness) * dir.z;
-    return mix(skyColor, vec3(.5, .5, .5) * darkness, cloudOpacity);
+    float cloudOpacity = getCloudOpacity(cloudCoord, dir, darkness);
+    t /= FOG;
+    cloudOpacity /= (1. + t * t);
+    return mix(skyColor, vec3(.3, .3, .3) * darkness, cloudOpacity);
 }
 
 /* Add distance fog to color.
