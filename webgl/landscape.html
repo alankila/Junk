@@ -17,11 +17,6 @@ uniform sampler2D uNoise;
 /* Coordinates being currently rendered. */
 varying vec2 vPosition;
 
-/* How far to subdivide modified Perlin noise.
- * (Determines how coarse the terrain is.) */
-const int MAPITERATIONS = 4;
-/* Parameter for Quilez's noise generator. */
-const float MAPSPIKES = 0.3;
 /* How many march iterations per ray. */
 const int RAYITERATIONS = 256;
 /* Convert distance between ray and terrain position to "safe" advancing step. */
@@ -41,65 +36,37 @@ const vec3 UP = vec3(0., 0., 1.);
 /* Sun brightness */
 const float SUN_INTENSITY = 8.;
 
-const vec2 F2 = vec2(0.366025403784, 0.366025403784);
-const vec2 G2 = vec2(0.211324865405, 0.211324865405);
-const float ONE = 1./256.;
-
+/* Get vector towards Sun.
+ * Output: normalized vector.
+ */
 vec4 getSunDirection() {
     float sunPhase = uTime * .01;
     float z = cos(sunPhase) * 0.7071;
     return vec4(sin(sunPhase) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
 }
 
-/* This function is based on the work of John Davis and Stefan Gustavson. */
-vec3 simplex2d(in vec2 P) {
-    vec2 Pi = P + dot(P, F2);
-    Pi = floor(Pi);
-    vec2 Pf0 = P - Pi + dot(Pi, G2);
-
-    // For the 2D case, the simplex shape is an equilateral triangle.
-    // Find out whether we are above or below the x=y diagonal to
-    // determine which of the two triangles we're in.
-    vec2 o1 = vec2(Pf0.x > Pf0.y, Pf0.x <= Pf0.y);
-
-    /* Get simplex gradients. The texture
-     * contains 4 values per pixel, the rg pair being
-     * gradient at (0, 0) and ba pair being the gradient at (1, 1).
-     */
-    Pi += .5;
-    vec4 grad02 = texture2D(uNoise, Pi * ONE) * 2.0 - 1.0;
-    vec2 grad0 = grad02.rg;
-    vec2 grad1 = texture2D(uNoise, (Pi + o1) * ONE).rg * 2.0 - 1.0;
-    vec2 grad2 = grad02.ba;
-
-    vec2 Pf1 = Pf0 - o1 + G2;
-    vec2 Pf2 = Pf0 + 2.0 * G2 - 1.0;
-    vec3 t = max(0.5 - vec3(dot(Pf0, Pf0), dot(Pf1, Pf1), dot(Pf2, Pf2)), 0.);
-    vec3 t2 = t * t;
-    vec3 t4 = t2 * t2;
-
-    vec3 td = t * t2 * vec3(dot(grad0, Pf0), dot(grad1, Pf1), dot(grad2, Pf2));
-    float dx = 8. * dot(td, vec3(Pf0.x, Pf1.x, Pf2.x)) - dot(t4, vec3(grad0.x, grad1.x, grad2.x));
-    float dy = 8. * dot(td, vec3(Pf0.y, Pf1.y, Pf2.y)) - dot(t4, vec3(grad0.y, grad1.y, grad2.y));
-
-    // Sum up and scale the result to cover the range [-.5,.5]
-    return vec3(dot(td, t), dx, dy) * 70.;
+/* Return gradient noise value & derivates.
+ * output: vec3(z, dx, dy)
+ */
+vec3 noise2d(in vec2 point) {
+    return (texture2D(uNoise, point).xyz - .5) * vec3(1., 2., 2.);
 }
 
 /* Combine simplex noise to given octave.
- * Output: vec4(normalx, normaly, normalz, value) */
+ * Output: vec4(normalx, normaly, normalz, value)
+ */
 vec4 fbmPerlin2d(in vec2 pos, in int lastIteration) {
     float w = 0.5;
     vec3 o = vec3(w, 0., 0);
     for (int i = 0; i < 16; i ++) {
-        o += w * simplex2d(pos);
+        o += w * noise2d(pos);
         if (i == lastIteration) {
             break;
         }
         w *= .5;
         pos *= 2.;
     }
-    
+
     return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
 }
 
@@ -110,7 +77,7 @@ vec4 fbmQuilez2d(in vec2 pos, in float spikiness, in int lastIteration) {
     vec3 o = vec3(w, 0., 0.);
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < 16; i ++) {
-        vec3 n = simplex2d(pos);
+        vec3 n = noise2d(pos);
 	d += n.yz * spikiness;
 	float wf = w / (1. + dot(d, d));
         o += wf * n;
@@ -122,6 +89,10 @@ vec4 fbmQuilez2d(in vec2 pos, in float spikiness, in int lastIteration) {
     }
 
     return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
+}
+
+vec4 getTerrain(in vec2 pos) {
+    return fbmQuilez2d(pos * (1./256.), .25, 4);
 }
 
 vec4 getWaterTexture(in vec3 pos) {
@@ -163,7 +134,7 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
      * After distance to scene has been acquired, update LOD. */
     float t = 0.0;
     for (int i = 0; i < RAYITERATIONS; i ++) {
-        float height = pos.z - fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
+        float height = pos.z - getTerrain(pos.xy).w;
 	
 	/* There's a trick here. Our distance estimates are not conservative;
 	 * if the ray steps into the terrain, height is negative, and the ray will
@@ -219,7 +190,7 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
         /* Are we close enough to terrain? */
 	float absHeight = abs(height);
         if (absHeight < STOPCONDITION * t) {
-	    pos.z = fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
+	    pos.z = getTerrain(pos.xy).w;
 	    break;
         }
 
@@ -238,55 +209,55 @@ float calculateShade(in vec3 pos) {
     float t = 0.01;
 
     vec3 sun = getSunDirection().xyz;
+    vec3 testpos = pos;
     for (int i = 0; i < 5; i ++) {
+	testpos += sun * t;
 	/* Positive -> above ground. */
-	vec3 testpos = pos + sun * t;
-	float rayHeight = testpos.z - fbmQuilez2d(testpos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
-	float inShadow = rayHeight / t - .1;
-	if (inShadow < 0.) {
-	    shadow += inShadow;
+	float rayHeight = testpos.z - getTerrain(testpos.xy).w;
+	float inShadow = rayHeight;
+	shadow += min(inShadow, 0.);
+	if (inShadow < -0.01) {
+	    break;
 	}
-	t *= 2.;
+	t *= 1.4;
     }
-    return smoothstep(-0.5, 0., shadow);
+
+    return clamp(100. * shadow + 1., 0., 1.);
 }
 
 /* Evaluate rules to find color of terrain point.
  * Output: RGB. */
 vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
-    vec3 normal = fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).xyz;
-    vec4 noise = fbmQuilez2d(pos.xy * 8., 1.0, 10);
+    vec3 normal = getTerrain(pos.xy).xyz;
+    vec4 noise = fbmQuilez2d(pos.xy / 32., 2.0, 8);
 
     /* Tilt the coarse surface with detail texture. */
     normal = normalize(normal + noise.xyz);
     
     /* Determine terrain type. */
     float overWater = smoothstep(WATER_LEVEL, WATER_LEVEL + 0.1, pos.z);
-    float sandOrRock = smoothstep(0.86, 0.82, normal.z - pos.z * .25 - overWater);
-    float rockOrSnow = smoothstep(1.01, 1.03, normal.z + pos.z * .1) * overWater;
+    float sandOrRock = smoothstep(0.90, 0.85, normal.z - pos.z * .25 - overWater);
+    //float foliage = sandOrRock * smoothstep(0.96, 0.97, normal.z);
+    float rockOrSnow = smoothstep(1.04, 1.05, normal.z + pos.z * .1) * overWater;
 
     /* Sand texture */
-    vec4 terrain = vec4(0.3, 0.3, 0.2, 0.) * pos.z;
+    vec4 terrain = vec4(0.2, 0.2, 0.14, 0.) * pos.z;
 
     /* Rock texture */
-    vec4 rockNoise = fbmPerlin2d(pos.xy * 512., 1);
+    vec4 rockNoise = fbmPerlin2d(pos.xy * 4., 1);
     vec4 rockTexture = vec4(.05, .04, .025, 0.) * noise.w;
-    rockTexture += vec4(.025, .0125, .005, 0.02) * rockNoise.w * rockNoise.w;
+    rockTexture += vec4(.03, .015, .008, 0.03) * rockNoise.w * rockNoise.w;
     terrain = mix(terrain, rockTexture, sandOrRock);
     normal = normalize(mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1));
+
+    /* Foliage: if not under water, or above snow line, and terrain tilt is suitable. */
+    //vec4 grass = vec4(0.01, 0.02, 0.00, 0.);
+    //terrain = mix(terrain, grass, foliage);
 
     /* Snow -- height increased if terrain is not flat. */
     terrain = mix(terrain, vec4(.21, .21, .21, .21), rockOrSnow);
    
-    /* Foliage: if not under water, or above snow line, and terrain tilt is suitable. */
-    /*float foliage =
-	step(WATER_LEVEL, pos.z + normal.z * .1 - .05)
-	* step(0.8, normal.z)
-	* (1. - smoothstep(1.4, 1.5, pos.z + normal.z));
-    vec4 grass = vec4(0.1, 0.2, 0.00, 0.);
-    terrain = mix(terrain, grass, foliage);*/
-
     /* Apply lighting */
     normal = normalize(normal);
     vec4 sun = getSunDirection();
@@ -304,12 +275,12 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
     float opacity = 0.;
     vec3 pos = vec3(spos, 0.);
-    darkness = 1. - fbmPerlin2d(pos.xy, 5).w * .5;
-    for (int j = 0; j < 6; j ++) {
-	float o = fbmPerlin2d(pos.xy, 5).w;
+    darkness = 1. - fbmPerlin2d(pos.xy * (1./128.) + 1., 5).w * .5;
+    for (int j = 0; j < 10; j ++) {
+	float o = fbmPerlin2d(pos.xy * (1./128.) + 1., 5).w;
 
 	/* is there cloud above the ray? */
-	float dz = (o - pos.z - 0.5) * .5;
+	float dz = o - pos.z - 0.5;
 	float step = max(0.03, abs(dz) * MARCH_SPEED);
 	opacity += max(dz, 0.);
 
@@ -376,9 +347,9 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
     }
 
     /* Refract scenery (utterly fake). */
-    float waterDepth = getWaterLevel(pos) - fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
+    float waterDepth = getWaterLevel(pos) - getTerrain(pos.xy).w;
     pos.xy += refract(dir, normal, 0.7).xy * waterDepth;
-    pos.z = fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
+    pos.z = getTerrain(pos.xy).w;
     vec3 refractedTerrain = getTerrainColor(pos, normal);
     /* Caustics */
     refractedTerrain *= 1. + waterDepth * pow(1.0 + normal.x - normal.y, 20.);
@@ -417,16 +388,16 @@ vec3 cameraExposure(vec3 terrain, vec3 dir) {
 }
 
 void main(void) {
-    //gl_FragColor = texture2D(uNoise, vPosition * 4.);
-    //gl_FragColor = texture2D(uWatermap, vPosition * 4.);
-    //gl_FragColor = vec4(fbmPerlin2d(vPosition, 8).w * vec3(1., 1., 1.), 1.);
+    //gl_FragColor = vec4(texture2D(uNoise, vPosition * .5 * .25).xyz, 1.);
+    //gl_FragColor = texture2D(uWatermap, vPosition);
+    //gl_FragColor = vec4(fbmPerlin2d(vPosition * .5, 8).w * vec3(.1, 1., 1.), 1.);
     //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2d(vPosition*4., 8).xyz, 1.);
-    //gl_FragColor = vec4(fbmQuilez2d(vPosition * 4., 8).w * vec3(1., 1., 1.) * .5, 1.);
-    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2d(vPosition*4., 8).xyz * .5, 1.);
+    //gl_FragColor = vec4(fbmQuilez2d(vPosition, 1., 8).w * vec3(1., 1., 1.) * .5, 1.);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2d(vPosition, 1., 8).xyz * .5, 1.);
     //return;
 
     /* Calculate position of camera. */
-    float groundHeight = fbmQuilez2d(uPos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
+    float groundHeight = getTerrain(uPos.xy).w;
     if (groundHeight < WATER_LEVEL) {
 	groundHeight = WATER_LEVEL;
     }
@@ -477,11 +448,12 @@ void main(void) {
 <script type="text/javascript">
 
 function prng(n) {
-    n = 12321 * n + 33323 & 0xffff;
-    for (var i = 0; i < 2; i ++) {
-	n &= 0xffff;
+    var m = n;
+    for (var i = 0; i < 3; i ++) {
+	n = (n & 0xffff) + m & 0xffff;
+	m = m + n & 0xffff;
 	n += n * n;
-	n ^= n >> 7;
+	n ^= n >> 15;
     }
 
     return n & 0xffff;
@@ -489,28 +461,54 @@ function prng(n) {
 
 function makeNoiseTexture(gl) {
     var perm = [];
-    for (var i = 0; i < 256 ; i ++) {
-	perm.push(prng(i));
+    for (var i = 0; i < 256; i ++) {
+	perm.push(prng(i + 12213));
     }
+    var getValueNoise = function(i, j) {
+	return perm[i + perm[j & 0xff] & 0xff] & 0xff;
+    };
 
-    var pixels = new Uint8Array(256 * 256 * 4);
+    var pixels = new Uint8Array(1024 * 1024 * 4);
     var offset = 0;
-    for (var i = 0; i < 256; i++) {
-	for (var j = 0; j < 256; j++) {
-	    var v1 = perm[j + perm[i] & 0xff];
-	    var v2 = perm[j + 1 + perm[i + 1 & 0xff] & 0xff];
-	    pixels[offset ++] = v1 & 0xff;
-	    pixels[offset ++] = v1 >> 8;
-	    pixels[offset ++] = v2 & 0xff;
-	    pixels[offset ++] = v2 >> 8;
+    for (var ix = 0; ix < 1024; ix++) {
+	var i = ix >> 2;
+	var u = ((ix & 3) + (1/2)) / 4;
+	var du = 30 * u * u * (u * (u - 2) + 1);
+	u = u * u * u * (u * (u * 6 - 15) + 10);
+
+	for (var jx = 0; jx < 1024; jx++) {
+	    var j = jx >> 2;
+	    var v = ((jx & 3) + (1/2)) / 4;
+
+	    /* quintic fade */
+	    var dv = 30 * v * v * (v * (v - 2) + 1);
+	    v = v * v * v * (v * (v * 6 - 15) + 10);
+
+	    var v0 = getValueNoise(i, j);
+	    var v1 = getValueNoise(i+1, j);
+	    var v2 = getValueNoise(i, j+1);
+	    var v3 = getValueNoise(i+1, j+1);
+
+	    var ku = v1 - v0;
+	    var kv = v2 - v0;
+	    var kuv = v0 + v3 - v1 - v2;
+
+	    var dx = -du * (ku + kuv*v);
+	    var dy = -dv * (kv + kuv*u);
+
+	    pixels[offset ++] = Math.round(v0 + ku*u + kv*v + kuv*u*v);
+	    pixels[offset ++] = Math.round((dx + .5) * 0x7f);
+	    pixels[offset ++] = Math.round((dy + .5) * 0x7f);
+	    pixels[offset ++] = 255;
 	}
     }
+
     var texture = gl.createTexture();
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1024, 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
     return texture;
 }
@@ -580,9 +578,9 @@ function effectInit(gl, shader) {
 </head>
 <body>
 
-<h1>Would Iñigo Quilez like it here?</h1>
+<h1>Would Iñigo Quílez like it here?</h1>
 <div>
-<canvas id="canvas" width="512" height="512"></canvas>
+<canvas id="canvas" width="768" height="768"></canvas>
 </div>
 
 <p>(If you can't see the effect live, <a href="landscape.png">a screenshot is here</a>)</p>
@@ -594,7 +592,7 @@ world's surface has been reached.
 </p>
 
 <p>The distance field is approximated from a heightmap computed realtime
-using modified fractional brownian motion similar to the formulation proposed by Quilez.
+using modified fractional brownian motion similar to the formulation proposed by Quílez.
 The terrain yielded this way is quite coarse; bump-mapping and other techniques
 are used to fill in an illusion of large amount of detail.
 </p>
