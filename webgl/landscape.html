@@ -301,6 +301,32 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 	 + shade * terrain.w * pow(specular, 20.);
 }
 
+float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
+    float opacity = 0.;
+    darkness = 1.;
+    vec3 pos = vec3(spos, 0.);
+    for (int j = 0; j < 8; j ++) {
+	float o = fbmPerlin2d(pos.xy, 5).w;
+
+	/* is there cloud above the ray? */
+	float dz = (o - pos.z - 0.5) * .5;
+	float step = max(0.03, abs(dz) * MARCH_SPEED);
+	if (dz > 0.) {
+	    opacity += min(dz, step);
+	    darkness -= dz * step;
+	}
+
+	pos += dir * step;
+	if (pos.z > 1.) {
+	    break;
+	}
+
+	step *= 2.;
+    }
+
+    return opacity;
+}
+
 /* Render sky.
  * Output: RGB.
  */
@@ -310,18 +336,13 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float sunDisc = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
 
-    float cloudTotal = 0.;
-    for (int ix = 0; ix < 5; ix ++) {
-	float i = 30. / (15. + float(ix));
-	vec2 cloudCoord = pos.xy + 8. * vec2(i, i * i);
-	float t = (i - pos.z) / dir.z;
-	float clouds = fbmPerlin2d(cloudCoord + dir.xy * t, 2).w;
-	clouds = smoothstep(0.5, 1.0, clouds);
-	cloudTotal += clouds * dir.z;
-    }
-
     vec3 skyColor = (vec3(skyBrightness, skyBrightness, 1.) * .1 + sunDisc);
-    return mix(skyColor, vec3(.5, .5, .5), cloudTotal * .2);
+
+    float cloudTotal = 0.;
+    vec2 cloudCoord = pos.xy + dir.xy * (1.5 - pos.z) / dir.z;
+    float darkness;
+    float cloudOpacity = getCloudOpacity(cloudCoord, dir, darkness) * dir.z;
+    return mix(skyColor, vec3(.5, .5, .5) * darkness, cloudOpacity);
 }
 
 /* Add distance fog to color.
@@ -617,7 +638,8 @@ merely approximated.
 exposure control that simulates iris if eye looks towards the Sun, and Sunlight turns progressively
 redder as Sun leaves zenith.</p>
 
-<p>Clouds are faked volumetric from number of stacked noise layers.</p>
+<p>Clouds are volumetric with help of a small raymarcher, although the cloud coloring is not realistic.
+</p>
 
 </body>
 </html>
