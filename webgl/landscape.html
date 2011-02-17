@@ -283,15 +283,15 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 
     /* Apply lighting */
     normal = normalize(normal);
-    float diffuse = max(dot(normal, SUN), 0.2);
     vec3 reflection = reflect(SUN, normal);
-
+    float diffuse = max(dot(normal, SUN), 0.0);
     float specular = max(dot(reflection, dir), 0.);
     float shade = calculateShade(pos);
 
-    return mix(shade, 1., 0.2) *
-	(terrain.xyz * diffuse
-	 + shade * SUN_INTENSITY * terrain.w * pow(specular, 20.));
+    /* Modified Phong shading. The ambient level is fixed at .1.
+     * The shadow masks out diffuse and the specular component. */
+    return terrain.xyz * (.1 + diffuse * shade)
+	 + shade * SUN_INTENSITY * terrain.w * pow(specular, 20.);
 }
 
 /* Render sky.
@@ -299,12 +299,24 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
  */
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float sunAngle = max(dot(dir, SUN), 0.);
-    float sunSpecular = pow(sunAngle, 40.);
+    float sunDisc = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
-    float clouds = fbmPerlin2d(pos.xy + dir.xy * (4. - pos.z) / dir.z, 3).w;
-    clouds *= clouds;
-    return mix(vec3(skyBrightness, skyBrightness, 1.) * .8, vec3(1., 1., 1.), clouds * dir.z) * (1. + sunAngle)
-	+ SUN_INTENSITY * sunSpecular;
+
+    float cloudTotal = 0.;
+    for (int ix = 0; ix < 5; ix ++) {
+	float i = 30. / (15. + float(ix));
+	vec2 cloudCoord = pos.xy + 8. * vec2(i, i * i);
+	float t = (i - pos.z) / dir.z;
+	float clouds = fbmPerlin2d(cloudCoord + dir.xy * t, 2).w;
+	clouds = smoothstep(0.4, 0.9, clouds);
+	cloudTotal += clouds * dir.z;
+    }
+    cloudTotal = clamp(cloudTotal * .06, 0., 1.);
+
+    vec3 skyColor = vec3(skyBrightness, skyBrightness, 1.) * .8;
+
+    return mix(skyColor, vec3(1., 1., 1.) * SUN_INTENSITY, cloudTotal)
+	+ SUN_INTENSITY * sunDisc;
 }
 
 /* Add distance fog to color.
@@ -333,7 +345,7 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
 
     /* Add sky */
     if (reflectionLength / FOG == 1.) {
-	reflectedTerrain = getSkyColor(reflectionPos, reflection);
+	reflectedTerrain = getSkyColor(pos, reflection);
     } else {
 	reflectedTerrain = applyFog(reflectedTerrain, reflectionLength);
     }
@@ -523,40 +535,58 @@ function effectInit(gl, shader) {
 <canvas id="canvas" width="512" height="512"></canvas>
 </div>
 
+<p>(If you can't see the effect live, <a href="landscape.png">a screenshot is here</a>)</p>
+
 <p>Shown here is a 3D world rendered in fragment shader. There is no
 triangle geometry of any kind. The world is rendered instead by a terrain
 marching technique, where a distance field is iterated until a point in
 world's surface has been reached.
 </p>
 
-<p>The terrain is calculated by the shader from simplex noise and fractional
-brownian motion similar to the formulation proposed by Quilez. This marching
-doesn't use many octaves of noise for performance reasons; to liven the result
-up, various procedural textures are calculated and applied to the scenery based
-on height, fbm noise and surface tilt. The rules are roughly as follows:
+<p>The distance field is approximated from a heightmap computed realtime
+using modified fractional brownian motion similar to the formulation proposed by Quilez.
+The terrain yielded this way is quite coarse; bump-mapping and other techniques
+are used to fill in an illusion of large amount of detail.
+</p>
+
+<p>The soft shadows are calculated by a minimal terrain marcher that fires a ray
+towards the Sun from the terrain point. If the ray passes through the terrain,
+the point is counted to be in the shade, and the amount of ground over
+the terrain-Sun ray then determines the extent of the soft shadowing. The sampling
+is done at just 5 fixed points per pixel with the points distributed exponentially.
+</p>
+
+<p>The lighting equation is a modified version of Phong shading, where
+soft shadows have been added that mask out the light contributions from the
+specular and diffuse components.
+</p>
+
+<p>
+The terrain types are derived from the following principles, using the knowledge of
+point's height and surface normal:
 </p>
 
 <ul>
 <li>The world is rock by default.</li>
 <li>Sand is ground rock, water grinds rock into sand, and sand tends to flow downhill.
     Therefore sand exists close to water and where surface tilt is not very large.</li>
-<li>Snow is wherever surface tilt is low and height is high.</li>
+<li>Snow is wherever surface tilt is low and height is high. (Not in water!)</li>
 </ul>
 
-<p>The water surface is a sum of about 40 2D sin waves, rendered with aid of
-a bumpmap calculated in JavaScript during effect's init. Note that the
-surface is real in sense that it actually has a height. The water is
-entirely colorless liquid, and its color is built from combination of
-reflection, refraction and caustics.
+<p>The water surface is a sum of some 30 2D sin waves, rendered with aid of a
+bumpmap calculated in JavaScript during effect's init. The surface is real in
+sense that it actually has a height. The water is added during terrain marching:
+if the ray enters a point that falls under the surface level of water at that point,
+the ray is backtracked to the ray-water intersection using Newton-Raphson iteration.
+The water is entirely colorless liquid, and its color is built from combination of
+reflection, refraction and caustics. The refraction is not really properly calculated,
+merely approximated.
 </p>
 
-<p>The shadows are calculated by a minimal terrain marcher that fires a ray
-towards the Sun from the terrain point. If the ray passes through the terrain,
-the point is calculated to be in the shade, and the amount of ground over
-the ray determines the extent of the soft shadowing. For performance reasons,
-this marching is quite imprecise, and dithering of the parameters is used to
-increase accuracy.
-</p>
+<p>The sun is very bright&mdash;8 times brighter than the brightest color. There's a dynamic
+exposure control that simulates iris if eye looks towards the Sun.</p>
+
+<p>Clouds are faked volumetric from number of stacked noise layers.</p>
 
 </body>
 </html>
