@@ -36,16 +36,19 @@ const float FOG = 5.;
 const float WATER_LEVEL = 0.4;
 /* Water surface precision */
 const int WATER_BISECTIONS = 4;
-/* Direction to infinitely far-away Sun */
-const vec3 SUN = vec3(0.9, 0., 0.45);
-/* Sun's brightness. */
-const float SUN_INTENSITY = 8.;
 /* The camera up direction. */
 const vec3 UP = vec3(0., 0., 1.);
+/* Sun brightness */
+const float SUN_INTENSITY = 8.;
 
 const vec2 F2 = vec2(0.366025403784, 0.366025403784);
 const vec2 G2 = vec2(0.211324865405, 0.211324865405);
 const float ONE = 1./256.;
+
+vec4 getSunDirection() {
+    float z = cos(uTime * .01) * 0.7071;
+    return vec4(sin(uTime * .01) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
+}
 
 /* This function is based on the work of John Davis and Stefan Gustavson. */
 vec3 simplex2d(in vec2 P) {
@@ -232,9 +235,11 @@ float calculateShade(in vec3 pos) {
      * maximum amount the ray from terrain point to sun is goes under terrain. */
     float shadow = 0.;
     float t = 0.01;
+
+    vec3 sun = getSunDirection().xyz;
     for (int i = 0; i < 5; i ++) {
 	/* Positive -> above ground. */
-	vec3 testpos = pos + SUN * t;
+	vec3 testpos = pos + sun * t;
 	float rayHeight = testpos.z - fbmQuilez2d(testpos.xy * .5, MAPSPIKES, MAPITERATIONS).w;
 	float inShadow = rayHeight / t - .1;
 	if (inShadow < 0.) {
@@ -250,28 +255,28 @@ float calculateShade(in vec3 pos) {
 vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
     vec3 normal = fbmQuilez2d(pos.xy * .5, MAPSPIKES, MAPITERATIONS).xyz;
-    vec4 noise = fbmQuilez2d(pos.xy * 8., 1.0, 12);
+    vec4 noise = fbmQuilez2d(pos.xy * 8., 1.0, 10);
 
     /* Tilt the coarse surface with detail texture. */
-    normal = normalize(normal + noise.xyz * noise.w);
+    normal = normalize(normal + noise.xyz);
     
     /* Determine terrain type. */
     float overWater = smoothstep(WATER_LEVEL, WATER_LEVEL + 0.1, pos.z);
-    float sandOrRock = smoothstep(0.84, 0.8, normal.z - pos.z * .25 - overWater);
-    float rockOrSnow = smoothstep(1.0, 1.02, normal.z + pos.z * .1) * overWater;
+    float sandOrRock = smoothstep(0.86, 0.82, normal.z - pos.z * .25 - overWater);
+    float rockOrSnow = smoothstep(1.01, 1.03, normal.z + pos.z * .1) * overWater;
 
     /* Sand texture */
-    vec4 terrain = vec4(1.0, 1.0, 0.6, 0.) * pos.z;
+    vec4 terrain = vec4(0.3, 0.3, 0.2, 0.) * pos.z;
 
     /* Rock texture */
     vec4 rockNoise = fbmPerlin2d(pos.xy * 512., 1);
-    vec4 rockTexture = vec4(.2, .16, .10, 0.) * sqrt(noise.w);
-    rockTexture += vec4(.1, .05, .02, 0.02) * rockNoise.w * rockNoise.w;
+    vec4 rockTexture = vec4(.05, .04, .025, 0.) * noise.w;
+    rockTexture += vec4(.025, .0125, .005, 0.02) * rockNoise.w * rockNoise.w;
     terrain = mix(terrain, rockTexture, sandOrRock);
-    normal = mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1);
+    normal = normalize(mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1));
 
     /* Snow -- height increased if terrain is not flat. */
-    terrain = mix(terrain, vec4(1.4, 1.4, 1.4, .5), rockOrSnow);
+    terrain = mix(terrain, vec4(.17, .17, .17, .3), rockOrSnow);
    
     /* Foliage: if not under water, or above snow line, and terrain tilt is suitable. */
     /*float foliage =
@@ -283,22 +288,24 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 
     /* Apply lighting */
     normal = normalize(normal);
-    vec3 reflection = reflect(SUN, normal);
-    float diffuse = max(dot(normal, SUN), 0.0);
+    vec4 sun = getSunDirection();
+    vec3 reflection = reflect(sun.xyz, normal);
+    float diffuse = max(dot(normal, sun.xyz), 0.0);
     float specular = max(dot(reflection, dir), 0.);
     float shade = calculateShade(pos);
 
     /* Modified Phong shading. The ambient level is fixed at .1.
      * The shadow masks out diffuse and the specular component. */
     return terrain.xyz * (.1 + diffuse * shade)
-	 + shade * SUN_INTENSITY * terrain.w * pow(specular, 20.);
+	 + shade * terrain.w * pow(specular, 20.);
 }
 
 /* Render sky.
  * Output: RGB.
  */
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
-    float sunAngle = max(dot(dir, SUN), 0.);
+    vec4 sun = getSunDirection();
+    float sunAngle = max(dot(dir, sun.xyz), 0.);
     float sunDisc = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
 
@@ -308,15 +315,12 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
 	vec2 cloudCoord = pos.xy + 8. * vec2(i, i * i);
 	float t = (i - pos.z) / dir.z;
 	float clouds = fbmPerlin2d(cloudCoord + dir.xy * t, 2).w;
-	clouds = smoothstep(0.4, 0.9, clouds);
+	clouds = smoothstep(0.5, 1.0, clouds);
 	cloudTotal += clouds * dir.z;
     }
-    cloudTotal = clamp(cloudTotal * .06, 0., 1.);
 
-    vec3 skyColor = vec3(skyBrightness, skyBrightness, 1.) * .8;
-
-    return mix(skyColor, vec3(1., 1., 1.) * SUN_INTENSITY, cloudTotal)
-	+ SUN_INTENSITY * sunDisc;
+    vec3 skyColor = (vec3(skyBrightness, skyBrightness, 1.) * .1 + sunDisc);
+    return mix(skyColor, vec3(.5, .5, .5), cloudTotal * .2);
 }
 
 /* Add distance fog to color.
@@ -324,7 +328,7 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
  */
 vec3 applyFog(in vec3 color, in float distance) {
     distance /= FOG;
-    return mix(color, vec3(.8, .8, .8), distance*distance);
+    return mix(color, vec3(.1, .1, .1), distance*distance);
 }
 
 /* Calculate water color based on reflection and refraction.
@@ -407,7 +411,8 @@ void main(void) {
 	terrain = applyFog(terrain, distance);
     }
 
-    float exposureControl = 1. - max(dot(uDir, SUN), 0.) * (1. - 1./SUN_INTENSITY);
+    vec4 sun = getSunDirection();
+    float exposureControl = sun.w - max(dot(uDir, sun.xyz) * sun.w - 1., 0.);
     gl_FragColor = vec4(sqrt(terrain * exposureControl), 1);
 }
 </script> 
