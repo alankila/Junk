@@ -46,8 +46,9 @@ const vec2 G2 = vec2(0.211324865405, 0.211324865405);
 const float ONE = 1./256.;
 
 vec4 getSunDirection() {
-    float z = cos(uTime * .01) * 0.7071;
-    return vec4(sin(uTime * .01) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
+    float sunPhase = uTime * .01;
+    float z = cos(sunPhase) * 0.7071;
+    return vec4(sin(sunPhase) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
 }
 
 /* This function is based on the work of John Davis and Stefan Gustavson. */
@@ -276,7 +277,7 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     normal = normalize(mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1));
 
     /* Snow -- height increased if terrain is not flat. */
-    terrain = mix(terrain, vec4(.17, .17, .17, .3), rockOrSnow);
+    terrain = mix(terrain, vec4(.21, .21, .21, .21), rockOrSnow);
    
     /* Foliage: if not under water, or above snow line, and terrain tilt is suitable. */
     /*float foliage =
@@ -370,6 +371,31 @@ vec3 cross(in vec3 a, in vec3 b) {
     return a.yzx * b.zxy - a.zxy * b.yzx;
 }
 
+vec3 cameraExposure(vec3 terrain, vec3 dir) {
+    vec4 sun = getSunDirection();
+    /* We want Sun to always be 2x exposed.
+     * 
+     * We don't know much about the world geometry here, but we know that
+     * the Sun shines at the brightness level sun.w. If the user views too
+     * close to the Sun, we progressively diminish the sun's brightness
+     * term until it is no more than 2 at directly looking at Sun.
+     * If sun, however, is dimmer than 2, then we just use whatever value it
+     * gives.
+     */
+    float exposureControl = mix(sun.w, min(sun.w, 2.), max(dot(sun.xyz, dir), 0.));
+
+    /* As sun goes down, turn shades towards red.
+     * Lowest brightness adjustment is (1.0, 0.5, 0.5). */
+    vec3 sunColor = vec3(
+	1.0,
+	1.0 + clamp(sun.z - 0.3, -0.8, 0.0),
+	1.0 + clamp(sun.z - 0.4, -0.9, 0.0)
+    );
+
+    /* sqrt here is gamma correction! */
+    return sqrt(terrain * sunColor * exposureControl);
+}
+
 void main(void) {
     //gl_FragColor = texture2D(uNoise, vPosition * 4.);
     //gl_FragColor = texture2D(uWatermap, vPosition * 4.);
@@ -411,10 +437,9 @@ void main(void) {
 	terrain = applyFog(terrain, distance);
     }
 
-    vec4 sun = getSunDirection();
-    float exposureControl = sun.w - max(dot(uDir, sun.xyz) * sun.w - 1., 0.);
-    gl_FragColor = vec4(sqrt(terrain * exposureControl), 1);
+    gl_FragColor = vec4(cameraExposure(terrain, uDir), 1.);
 }
+
 </script> 
 
 <script id="shader-vs" type="x-shader/x-vertex"> 
@@ -589,7 +614,8 @@ merely approximated.
 </p>
 
 <p>The sun is very bright&mdash;8 times brighter than the brightest color. There's a dynamic
-exposure control that simulates iris if eye looks towards the Sun.</p>
+exposure control that simulates iris if eye looks towards the Sun, and Sunlight turns progressively
+redder as Sun leaves zenith.</p>
 
 <p>Clouds are faked volumetric from number of stacked noise layers.</p>
 
