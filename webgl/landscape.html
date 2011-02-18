@@ -26,9 +26,9 @@ const float LOD = 2.0;
 /* When ray reaches close enough to terrain, stop marching */
 const float STOPCONDITION = 0.0025;
 /* Render distance. */
-const float FOG = 5.;
+const float FOG = 6.;
 /* Water level */
-const float WATER_LEVEL = 0.4;
+const float WATER_LEVEL = 0.6;
 /* Water surface precision */
 const int WATER_BISECTIONS = 4;
 /* The camera up direction. */
@@ -49,7 +49,7 @@ vec4 getSun() {
  * output: vec4(z, dx, dy, ao)
  */
 vec4 noise2d(in vec2 point) {
-    return (texture2D(uNoise, point) - vec4(.5, .5, .5, 0.)) * vec4(1., 2., 2., 1.);
+    return (texture2D(uNoise, point) - vec4(.5, .5, .5, 0.));
 }
 
 /* Combine simplex noise to given octave.
@@ -239,17 +239,22 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
     vec3 normal = getTerrain(pos.xy).xyz;
     float ao = getTerrainAo(pos.xy);
-    vec4 noise = fbmQuilez2d(pos.xy / 32., 2.0, 8) * 1.;
+    vec4 noise = fbmQuilez2d(pos.xy / 32., 2.0, 8) * 2.;
     noise = vec4(normalize(cross(vec3(-1., 0., noise.y), vec3(0., -1., noise.z))), noise.x);
 
-    /* Tilt the coarse surface with detail texture. */
-    normal = normalize(normal + noise.xyz);
+    /* Tilt the coarse surface normal with detail texture normal. */
+    /* Find rotation axis. */
+    vec3 u = cross(vec3(0., 0., 1.), noise.xyz);
+    /* Really: dot(noise.xyz, vec3(0., 0., 1.)) */
+    float cosTheta = noise.z;
+    /* Rodrigues's rotation formula. */
+    normal = normal * cosTheta + cross(u, normal) * sqrt(1. - cosTheta * cosTheta) + u * dot(u, normal) * (1. - cosTheta);
     
     /* Determine terrain type. */
     float overWater = smoothstep(WATER_LEVEL, WATER_LEVEL + 0.1, pos.z);
-    float sandOrRock = smoothstep(0.90, 0.85, normal.z - pos.z * .25 - overWater);
+    float sandOrRock = smoothstep(0.75, 0.70, normal.z - pos.z * .25 - overWater);
     //float foliage = sandOrRock * smoothstep(0.96, 0.97, normal.z);
-    float rockOrSnow = smoothstep(1.04, 1.05, normal.z + pos.z * .1) * overWater;
+    float rockOrSnow = smoothstep(1.03, 1.04, normal.z + pos.z * .1) * overWater;
 
     /* Sand texture */
     vec4 terrain = vec4(0.2, 0.2, 0.14, 0.) * pos.z;
@@ -257,9 +262,9 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Rock texture */
     vec4 rockNoise = getNoise(pos.xy * 4., 1);
     vec4 rockTexture = vec4(.05, .04, .025, 0.) * noise.w;
-    rockTexture += vec4(.03, .015, .008, 0.03) * rockNoise.w * rockNoise.w;
+    rockTexture += vec4(.03, .015, .008, 0.08) * rockNoise.w * rockNoise.w;
     terrain = mix(terrain, rockTexture, sandOrRock);
-    normal = normalize(mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1));
+//    normal = normalize(mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1));
 
     /* Foliage: if not under water, or above snow line, and terrain tilt is suitable. */
     //vec4 grass = vec4(0.01, 0.02, 0.00, 0.);
@@ -269,7 +274,6 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     terrain = mix(terrain, vec4(.21, .21, .21, .21), rockOrSnow);
    
     /* Apply lighting */
-    normal = normalize(normal);
     vec4 sun = getSun();
     vec3 reflection = reflect(sun.xyz, normal);
     float diffuse = max(dot(normal, sun.xyz), 0.0);
@@ -512,9 +516,14 @@ function makeNoiseTexture(gl) {
 	    var dx = -du * (ku + kuv*v);
 	    var dy = -dv * (kv + kuv*u);
 
+	    dx += 0x80;
+	    dy += 0x80;
+	    dx = Math.max(Math.min(dx, 255), 0);
+	    dy = Math.max(Math.min(dy, 255), 0);
+
 	    pixels[offset ++] = Math.round(v0 + ku*u + kv*v + kuv*u*v);
-	    pixels[offset ++] = Math.round((dx + .5) * 0x7f);
-	    pixels[offset ++] = Math.round((dy + .5) * 0x7f);
+	    pixels[offset ++] = Math.round(dx);
+	    pixels[offset ++] = Math.round(dy);
 	    pixels[offset ++] = 0;
 	}
     }
