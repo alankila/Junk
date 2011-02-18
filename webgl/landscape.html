@@ -18,23 +18,28 @@ uniform sampler2D uNoise;
 varying vec2 vPosition;
 
 /* How many march iterations per ray. */
-const int RAYITERATIONS = 256;
+const int MAP_ITERATIONS = 256;
 /* Convert distance between ray and terrain position to "safe" advancing step. */
 const float MARCH_SPEED = 0.5;
 /* Level Of Detail: how far to render until dropping terrain features. */
 const float LOD = 2.0;
 /* When ray reaches close enough to terrain, stop marching */
-const float STOPCONDITION = 0.0025;
+const float STOP_CONDITION = 0.0025;
 /* Render distance. */
 const float FOG = 6.;
 /* Water level */
 const float WATER_LEVEL = 0.6;
 /* Water surface precision */
-const int WATER_BISECTIONS = 4;
+const int WATER_ITERATIONS = 4;
 /* The camera up direction. */
 const vec3 UP = vec3(0., 0., 1.);
 /* Sun brightness */
 const float SUN_INTENSITY = 8.;
+
+/* Cross product. */
+vec3 cross(in vec3 a, in vec3 b) {
+    return a.yzx * b.zxy - a.zxy * b.yzx;
+}
 
 /* Get vector towards Sun.
  * Output: normalized vector.
@@ -118,7 +123,7 @@ vec3 getWaterNormal(in vec3 pos) {
 /* Get water level */
 float getWaterLevel(in vec3 pos) {
     float ripple = getWaterTexture(pos).z;
-    return WATER_LEVEL - ripple * .1;
+    return WATER_LEVEL + (ripple * .1);
 }
 
 /* Terrain marching.
@@ -141,7 +146,7 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
     /* Dynamic LOD during marching:
      * After distance to scene has been acquired, update LOD. */
     float t = 0.0;
-    for (int i = 0; i < RAYITERATIONS; i ++) {
+    for (int i = 0; i < MAP_ITERATIONS; i ++) {
         float height = pos.z - getTerrain(pos.xy).w;
 	
 	/* There's a trick here. Our distance estimates are not conservative;
@@ -156,52 +161,12 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
 	    break;
         }
 
-	float waterLevel = getWaterLevel(pos);
-	if (pos.z < waterLevel) {
-	    /* underwater; find intersection point. */
-
-	    /* Initial brackets: earlier iteration was above,
-	     * this one is below. Therefore, there must be an
-	     * intersection point. */
-	    float b = t;
-	    float a = t - distanceEstimate;
-
-	    for (int i = 0; i < WATER_BISECTIONS; i ++) {
-		/* Estimate distance to water. */
-		float underwaterLength = (waterLevel - pos.z) / dir.z;
-		float t2 = t + underwaterLength;
-
-		/* Is the new root outside the established brackets? */
-		if (t2 < a || t2 > b) {
-		    /* Try again at range midpoint. */
-		    waterLevel = getWaterLevel(pos);
-		    t2 = (a + b) * .5;
-		}
-
-		pos += dir * (t2 - t);
-		t = t2;
-		waterLevel = getWaterLevel(pos);
-		
-		/* Discover root brackets as we go. */
-		if (waterLevel < pos.z) {
-		    a = t;
-		} else {
-		    b = t;
-		}
-
-	    }
-	    
-	    pos.z = waterLevel;
-	    break;
-	}
-
         /* Are we close enough to terrain? */
 	float absHeight = abs(height);
-        if (absHeight < STOPCONDITION * t) {
+        if (absHeight < STOP_CONDITION * t) {
 	    pos.z = getTerrain(pos.xy).w;
 	    break;
         }
-
     }
 
     return t;
@@ -366,22 +331,15 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
 	reflectedTerrain = applyFog(reflectedTerrain, reflectionLength);
     }
 
-    /* Refract scenery (utterly fake). */
-    float waterDepth = getWaterLevel(pos) - getTerrain(pos.xy).w;
-    pos.xy += refract(dir, normal, 0.7).xy * waterDepth;
-    pos.z = getTerrain(pos.xy).w;
-    vec3 refractedTerrain = getTerrainColor(pos, normal);
-    /* Caustics */
-    refractedTerrain *= 1. + waterDepth * pow(1.0 + normal.x - normal.y, 20.);
+    /* Refract scenery. */
+    vec3 refractionPos = pos;
+    vec3 refraction = dir;//refract(dir, normal, 0.7);
+    float refractedLength = intersectTerrain(refractionPos, refraction);
+    vec3 refractedTerrain = getTerrainColor(refractionPos, refraction);
 
     return mix(reflectedTerrain, refractedTerrain, reflectionOrRefraction);
 }
     
-/* Cross product. */
-vec3 cross(in vec3 a, in vec3 b) {
-    return a.yzx * b.zxy - a.zxy * b.yzx;
-}
-
 vec3 cameraExposure(vec3 terrain, vec3 dir) {
     vec4 sun = getSun();
     /* We want Sun to always be 2x exposed.
@@ -405,6 +363,30 @@ vec3 cameraExposure(vec3 terrain, vec3 dir) {
 
     /* sqrt here is gamma correction! */
     return sqrt(terrain * sunColor * exposureControl);
+}
+
+vec3 intersectWater(vec3 pos, vec3 dir, inout float t) {
+    for (int i = 0; i < WATER_ITERATIONS; i ++) {
+	float waterLevel = getWaterLevel(pos);
+	float underwaterLength = (waterLevel - pos.z) / dir.z;
+	t += underwaterLength;
+	pos += dir * underwaterLength;
+	if (abs(underwaterLength) < STOP_CONDITION * t) {
+	    pos.z = waterLevel;
+	    break;
+	}
+    }
+
+    /* Is terrain actually above water? If yes,
+     * we have a shoreline pixel. We are committed
+     * to rendering water by this point, so we'll just
+     * fix this up. */
+    float w = getTerrain(pos.xy).w;
+    if (w > pos.z) {
+	pos.z = w;
+    }
+
+    return pos;
 }
 
 void main(void) {
@@ -432,12 +414,14 @@ void main(void) {
     /* Terrain march. */
     vec3 terrainPos = cameraPos;
     float distance = intersectTerrain(terrainPos, dir);
-    float waterLevel = getWaterLevel(terrainPos);
 
-    /* Blend water if under water level. */
+    /* Are we under water? */
     vec3 terrain;
-    if (terrainPos.z == waterLevel) {
-	terrain = getWaterColor(terrainPos, dir);
+    float waterLevel = getWaterLevel(terrainPos);
+    if (terrainPos.z < waterLevel) {
+	/* Find the ray-water intersection. */
+	vec3 waterPos = intersectWater(terrainPos, dir, distance);
+	terrain = getWaterColor(waterPos, dir);
     } else {
 	terrain = getTerrainColor(terrainPos, dir);
     }
@@ -670,12 +654,10 @@ point's height and surface normal:
 
 <p>The water surface is a sum of some 30 2D sin waves, rendered with aid of a
 bumpmap calculated in JavaScript during effect's init. The surface is real in
-sense that it actually has a height. The water is added during terrain marching:
-if the ray enters a point that falls under the surface level of water at that point,
-the ray is backtracked to the ray-water intersection using Newton-Raphson iteration.
+sense that it actually has a height. If the terrain marching takes us under water level
+at that position, then water is drawn instead of terrain.
 The water is entirely colorless liquid, and its color is built from combination of
-reflection, refraction and caustics. The refraction is not really properly calculated,
-merely approximated.
+reflection and refraction.
 </p>
 
 <p>The sun is very bright&mdash;8 times brighter than the brightest color. There's a dynamic
