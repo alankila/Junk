@@ -39,8 +39,8 @@ const float SUN_INTENSITY = 8.;
 /* Get vector towards Sun.
  * Output: normalized vector.
  */
-vec4 getSunDirection() {
-    float sunPhase = uTime * .01;
+vec4 getSun() {
+    float sunPhase = uTime * .1 + 1.6;
     float z = cos(sunPhase) * 0.7071;
     return vec4(sin(sunPhase) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
 }
@@ -208,7 +208,7 @@ float calculateShade(in vec3 pos) {
     float shadow = 0.;
     float t = 0.01;
 
-    vec3 sun = getSunDirection().xyz;
+    vec3 sun = getSun().xyz;
     vec3 testpos = pos;
     for (int i = 0; i < 5; i ++) {
 	testpos += sun * t;
@@ -260,7 +260,7 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
    
     /* Apply lighting */
     normal = normalize(normal);
-    vec4 sun = getSunDirection();
+    vec4 sun = getSun();
     vec3 reflection = reflect(sun.xyz, normal);
     float diffuse = max(dot(normal, sun.xyz), 0.0);
     float specular = max(dot(reflection, dir), 0.);
@@ -275,9 +275,9 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
     float opacity = 0.;
     vec3 pos = vec3(spos, 0.);
-    darkness = 1. - fbmPerlin2d(pos.xy * (1./128.) + 1., 5).w * .5;
+    darkness = 1. - fbmPerlin2d(pos.xy * (1./128.) + 1., 4).w * .5;
     for (int j = 0; j < 10; j ++) {
-	float o = fbmPerlin2d(pos.xy * (1./128.) + 1., 5).w;
+	float o = fbmPerlin2d((pos.xy + vec2(uTime*.04, 1.)) / 128., 4).w;
 
 	/* is there cloud above the ray? */
 	float dz = o - pos.z - 0.5;
@@ -297,12 +297,14 @@ float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
  * Output: RGB.
  */
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
-    vec4 sun = getSunDirection();
+    vec4 sun = getSun();
     float sunAngle = max(dot(dir, sun.xyz), 0.);
     float sunDisc = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
 
     vec3 skyColor = (vec3(skyBrightness, skyBrightness, 1.) * .1 + sunDisc);
+    float starNoise = fbmPerlin2d(vec2(acos(dir.z), atan(dir.x, dir.y)) * .5, 1).w;
+    skyColor += vec3(.05, .05, .05) / sun.w * smoothstep(0.75, 0.85, starNoise);
 
     float cloudTotal = 0.;
     float t = (1.5 - pos.z) / dir.z;
@@ -315,7 +317,11 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     return mix(skyColor, vec3(.3, .3, .3) * darkness, cloudOpacity);
 }
 
-/* Add distance fog to color.
+/* Add fog to color.
+ * The real fog would be an exponential process as function of
+ * distance, but we are just simulating it with 1/(distance*distance) style
+ * mixing of some grayish shade.
+ *
  * Output: RGB.
  */
 vec3 applyFog(in vec3 color, in float distance) {
@@ -363,7 +369,7 @@ vec3 cross(in vec3 a, in vec3 b) {
 }
 
 vec3 cameraExposure(vec3 terrain, vec3 dir) {
-    vec4 sun = getSunDirection();
+    vec4 sun = getSun();
     /* We want Sun to always be 2x exposed.
      * 
      * We don't know much about the world geometry here, but we know that
