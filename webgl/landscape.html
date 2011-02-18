@@ -40,24 +40,24 @@ const float SUN_INTENSITY = 8.;
  * Output: normalized vector.
  */
 vec4 getSun() {
-    float sunPhase = uTime * .1 + 1.6;
+    float sunPhase = uTime * .01;
     float z = cos(sunPhase) * 0.7071;
     return vec4(sin(sunPhase) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
 }
 
-/* Return gradient noise value & derivates.
- * output: vec3(z, dx, dy)
+/* Return gradient noise value, derivates, and ambient occlusion if used for heightmap.
+ * output: vec4(z, dx, dy, ao)
  */
-vec3 noise2d(in vec2 point) {
-    return (texture2D(uNoise, point).xyz - .5) * vec3(1., 2., 2.);
+vec4 noise2d(in vec2 point) {
+    return (texture2D(uNoise, point) - vec4(.5, .5, .5, 0.)) * vec4(1., 2., 2., 1.);
 }
 
 /* Combine simplex noise to given octave.
- * Output: vec4(normalx, normaly, normalz, value)
+ * Output: vec3(dx, dy, value, ao)
  */
 vec4 fbmPerlin2d(in vec2 pos, in int lastIteration) {
     float w = 0.5;
-    vec3 o = vec3(w, 0., 0);
+    vec4 o = vec4(w, 0., 0, 0.);
     for (int i = 0; i < 16; i ++) {
         o += w * noise2d(pos);
         if (i == lastIteration) {
@@ -66,18 +66,17 @@ vec4 fbmPerlin2d(in vec2 pos, in int lastIteration) {
         w *= .5;
         pos *= 2.;
     }
-
-    return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
+    return o;
 }
 
 /* Combine simplex noise to given octave with enhancement by Inigo Quilez.
- * Output: vec4(normalx, normaly, normalz, value) */
+ * Output: vec3(normalx, normaly, normalz, value) */
 vec4 fbmQuilez2d(in vec2 pos, in float spikiness, in int lastIteration) {
     float w = 0.5;
-    vec3 o = vec3(w, 0., 0.);
+    vec4 o = vec4(w, 0., 0., 0.);
     vec2 d = vec2(0., 0.);
     for (int i = 0; i < 16; i ++) {
-        vec3 n = noise2d(pos);
+        vec4 n = noise2d(pos);
 	d += n.yz * spikiness;
 	float wf = w / (1. + dot(d, d));
         o += wf * n;
@@ -87,12 +86,21 @@ vec4 fbmQuilez2d(in vec2 pos, in float spikiness, in int lastIteration) {
         w *= .5;
         pos *= 2.;
     }
+    return o;
+}
 
+vec4 getNoise(in vec2 pos, in int lastIteration) {
+    vec3 o = fbmPerlin2d(pos, lastIteration).xyz;
     return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
 }
 
 vec4 getTerrain(in vec2 pos) {
-    return fbmQuilez2d(pos * (1./256.), .25, 4);
+    vec3 o = fbmQuilez2d(pos * (1./512.), 0.5, 4).xyz * 2.;
+    return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
+}
+
+float getTerrainAo(in vec2 pos) {
+    return fbmQuilez2d(pos * (1./512.), 0.5, 4).w;
 }
 
 vec4 getWaterTexture(in vec3 pos) {
@@ -230,7 +238,9 @@ float calculateShade(in vec3 pos) {
 vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
     vec3 normal = getTerrain(pos.xy).xyz;
-    vec4 noise = fbmQuilez2d(pos.xy / 32., 2.0, 8);
+    float ao = getTerrainAo(pos.xy);
+    vec4 noise = fbmQuilez2d(pos.xy / 32., 2.0, 8) * 1.;
+    noise = vec4(normalize(cross(vec3(-1., 0., noise.y), vec3(0., -1., noise.z))), noise.x);
 
     /* Tilt the coarse surface with detail texture. */
     normal = normalize(normal + noise.xyz);
@@ -245,7 +255,7 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     vec4 terrain = vec4(0.2, 0.2, 0.14, 0.) * pos.z;
 
     /* Rock texture */
-    vec4 rockNoise = fbmPerlin2d(pos.xy * 4., 1);
+    vec4 rockNoise = getNoise(pos.xy * 4., 1);
     vec4 rockTexture = vec4(.05, .04, .025, 0.) * noise.w;
     rockTexture += vec4(.03, .015, .008, 0.03) * rockNoise.w * rockNoise.w;
     terrain = mix(terrain, rockTexture, sandOrRock);
@@ -268,16 +278,16 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
 
     /* Modified Phong shading. The ambient level is fixed at .1.
      * The shadow masks out diffuse and the specular component. */
-    return terrain.xyz * (.1 + diffuse * shade)
+    return terrain.xyz * (.1 * ao + diffuse * shade)
 	 + shade * terrain.w * pow(specular, 20.);
 }
 
 float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
     float opacity = 0.;
     vec3 pos = vec3(spos, 0.);
-    darkness = 1. - fbmPerlin2d(pos.xy * (1./128.) + 1., 4).w * .5;
+    darkness = 1. - getNoise(pos.xy * (1./128.) + 1., 4).w * .5;
     for (int j = 0; j < 10; j ++) {
-	float o = fbmPerlin2d((pos.xy + vec2(uTime*.04, 1.)) / 128., 4).w;
+	float o = getNoise((pos.xy + vec2(uTime*.04, 1.)) / 128., 4).w;
 
 	/* is there cloud above the ray? */
 	float dz = o - pos.z - 0.5;
@@ -303,11 +313,11 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
 
     vec3 skyColor = (vec3(skyBrightness, skyBrightness, 1.) * .1 + sunDisc);
-    float starNoise = fbmPerlin2d(vec2(acos(dir.z), atan(dir.x, dir.y)) * .5, 1).w;
+    float starNoise = getNoise(vec2(acos(dir.z), atan(dir.x, dir.y)) * .5, 1).w;
     skyColor += vec3(.05, .05, .05) / sun.w * smoothstep(0.75, 0.85, starNoise);
 
     float cloudTotal = 0.;
-    float t = (1.5 - pos.z) / dir.z;
+    float t = (2.5 - pos.z) / dir.z;
 
     vec2 cloudCoord = pos.xy + dir.xy * t;
     float darkness;
@@ -394,7 +404,7 @@ vec3 cameraExposure(vec3 terrain, vec3 dir) {
 }
 
 void main(void) {
-    //gl_FragColor = vec4(texture2D(uNoise, vPosition * .5 * .25).xyz, 1.);
+    //gl_FragColor = vec4(texture2D(uNoise, vPosition * .5 * .25).www, 1.);
     //gl_FragColor = texture2D(uWatermap, vPosition);
     //gl_FragColor = vec4(fbmPerlin2d(vPosition * .5, 8).w * vec3(.1, 1., 1.), 1.);
     //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2d(vPosition*4., 8).xyz, 1.);
@@ -505,7 +515,29 @@ function makeNoiseTexture(gl) {
 	    pixels[offset ++] = Math.round(v0 + ku*u + kv*v + kuv*u*v);
 	    pixels[offset ++] = Math.round((dx + .5) * 0x7f);
 	    pixels[offset ++] = Math.round((dy + .5) * 0x7f);
-	    pixels[offset ++] = 255;
+	    pixels[offset ++] = 0;
+	}
+    }
+
+    /* Post-process ambient occlusion term. */
+    var offset = 0;
+    for (var ix = 0; ix < 1024; ix++) {
+	for (var jx = 0; jx < 1024; jx++) {
+	    var v = pixels[ix * (1024 * 4) + jx * 4];
+	    var vu = pixels[(ix - 1 & 0x3ff) * (1024 * 4) + jx * 4];
+	    var vd = pixels[(ix + 1 & 0x3ff) * (1024 * 4) + jx * 4];
+	    var vl = pixels[ix * (1024 * 4) + (jx - 1 & 0x3ff) * 4];
+	    var vr = pixels[ix * (1024 * 4) + (jx + 1 & 0x3ff) * 4];
+
+	    var ao = 256 - (4 * v - vu - vd - vl - vr);
+	    if (ao < 0) {
+		ao = 0;
+	    }
+	    if (ao > 255) {
+		ao = 255;
+	    }
+
+	    pixels[ix * (1024 * 4) + jx * 4 + 3] = ao;
 	}
     }
 
