@@ -31,21 +31,20 @@ vec3 cross(in vec3 a, in vec3 b) {
 }
 
 float mandelboxDistance(in vec3 pos, out float coloringType) {
-    vec3 iter = pos;
-    float DEfactor = uScale;
+    vec4 iter = vec4(pos, abs(uScale));
 
     coloringType = 0.;
     for (int i = 0; i < ITERATIONS; i ++) {
-	iter = clamp(iter, -1., 1.) * 2. - iter;
-	float f = clamp(dot(iter, iter), 0.25, 1.0);
-	float mf = uScale / f;
-	iter = iter * mf + pos;
+	/* Box fold */
+	iter.xyz = clamp(iter.xyz, -1., 1.) * 2. - iter.xyz;
+	float f = clamp(dot(iter.xyz, iter.xyz), 0.25, 1.0);
+	iter *= uScale / f;
+	iter.xyz += pos;
 	coloringType += f;
-	DEfactor *= mf;
     }
     coloringType /= float(ITERATIONS);
 
-    return length(iter) / abs(DEfactor);
+    return length(iter.xyz) / iter.w;
 }
 
 void intersectMandelbox(inout vec3 pos, in vec3 dir, out float t, out int iterations)
@@ -74,7 +73,7 @@ void intersectMandelbox(inout vec3 pos, in vec3 dir, out float t, out int iterat
 vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
     int ao;
     intersectMandelbox(pos, dir, t, ao);
-    if (t != 1.) {
+    if (t < 10.) {
 	/* Estimate material type. */
 	float curveLike;
 	float distance = mandelboxDistance(pos, curveLike);
