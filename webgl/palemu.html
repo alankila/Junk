@@ -8,26 +8,26 @@ varying vec2 vPosition;
 uniform sampler2D uScreen;
 uniform sampler2D uPalette;
 
-const float PAL_REFERENCE_GAMMA = 2.8;
+const float REFERENCE_PAL_GAMMA = 2.8;
 const float DISPLAY_SYSTEM_GAMMA = 2.0;
 const float BRIGHTNESS = 0.;
 const float CONTRAST = 1.;
 
 const mat3 YUV2RGB = mat3(
-        1.,        1.,      1.,
-        0., -0.39465, 2.03211,
-        1.13983, -0.58060,  0.
+        1.     ,  1.     , 1.     ,
+        0.     , -0.39465, 2.03211,
+        1.13983, -0.58060, 0.
 );
 
 const float YL = 0.25;
 const float YH = 0.5;
 
-vec3 getPixel(vec2 position) {
+vec3 getPixel(ivec2 position) {
     /* Yields color index 0 .. 15 */
-    float index = texture2D(uScreen, position).x * 256.;
+    float index = texture2D(uScreen, (vec2(position) + .5) / 256.).x * 256.;
 
     /* Select odd/even palette. */
-    float row = fract(position.y * 128.) * .35;
+    float row = fract(float(position.y) / 2.);
 
     /* Lookup vec2(color, rotation) palette index. */
     vec3 yuv = texture2D(uPalette, vec2((index + .5) / 16., row)).rgb;
@@ -37,10 +37,10 @@ vec3 getPixel(vec2 position) {
 }
 
 /* Simple approximation of horizontal bandwidth at y, u and v. */
-vec3 getHorizontallyFilteredPixel(vec2 position) {
-    vec3 yuv0 = getPixel(position - vec2(-1./256., 0.));
-    vec3 yuv1 = getPixel(position                     );
-    vec3 yuv2 = getPixel(position + vec2(-1./256., 0.));
+vec3 getHorizontallyFilteredPixel(ivec2 position) {
+    vec3 yuv0 = getPixel(position + ivec2(-1, 0.));
+    vec3 yuv1 = getPixel(position               );
+    vec3 yuv2 = getPixel(position + ivec2( 1, 0.));
 
     return vec3(
         (yuv0.r + yuv2.r) * YL + yuv1.r * YH,
@@ -49,39 +49,51 @@ vec3 getHorizontallyFilteredPixel(vec2 position) {
 }
 
 /* PAL alternating lines UV average. */
-vec3 getFilteredPixel(vec2 position) {
-    vec3 yuvBefore = getHorizontallyFilteredPixel(position - vec2(0., 1./256.));
+vec3 getFilteredPixel(ivec2 position) {
+    vec3 yuvBefore = getHorizontallyFilteredPixel(position + ivec2(0, -1));
     vec3 yuvCurrent = getHorizontallyFilteredPixel(position);
     vec3 yuv = vec3(yuvCurrent.r, .5 * (yuvBefore.gb + yuvCurrent.gb));
-    return YUV2RGB * yuv;
+    vec3 rgb = YUV2RGB * yuv;
+
+    return vec3(
+        pow(rgb.x, REFERENCE_PAL_GAMMA),
+        pow(rgb.y, REFERENCE_PAL_GAMMA),
+        pow(rgb.z, REFERENCE_PAL_GAMMA)
+    );
 }
 
 /* Brightness, contrast, gamma. */
 vec3 applyMonitorParams(vec3 rgb) {
     rgb = (rgb + BRIGHTNESS) * CONTRAST;
-    float g = PAL_REFERENCE_GAMMA / DISPLAY_SYSTEM_GAMMA;
-    return vec3(pow(rgb.r, g), pow(rgb.g, g), pow(rgb.b, g));
+    return vec3(
+        pow(rgb.r, 1./DISPLAY_SYSTEM_GAMMA),
+        pow(rgb.g, 1./DISPLAY_SYSTEM_GAMMA),
+        pow(rgb.b, 1./DISPLAY_SYSTEM_GAMMA)
+    );
 }
 
 /* Generate the mask to simulate scanlines. */
-float scanlineFilter(float row) {
-    float x = sin(row * 512. * 3.14159);
-    return .9 - x * .1;
+float scanlineFilter(in float row) {
+    float x1 = sin(2. * 3.14159 * row);
+    return .8 - x1 * .2;
 }
 
 void main(void) {
-    /* Position is from 0 .. 1 */
-    vec2 pos = vPosition * .5 + .5;
+    /* Position is from 0 .. 256 in c64-screen texture coords */
+    vec2 fpos = (vPosition * .5 + .5) * 256. - .5;
+
+    ivec2 ipos = ivec2(fpos);
     /* The line immediately before current line on display screen. */
-    vec3 rgbBefore = getFilteredPixel(pos - vec2(0., 1./512.));
+    vec3 rgbBefore = getFilteredPixel(ipos + ivec2(0, -1));
     /* The current line. */
-    vec3 rgbCurrent = getFilteredPixel(pos);
+    vec3 rgbCurrent = getFilteredPixel(ipos);
     /* Linear interpolation. */
-    vec3 rgb = mix(rgbBefore, rgbCurrent, fract(pos.y * 512.));
+    vec3 rgb = mix(rgbBefore, rgbCurrent, fract(fpos.y));
     /* Scanline mask. */
-    rgb *= scanlineFilter(pos.y);
+    rgb *= scanlineFilter(fract(fpos.y * .5));
     /* Brightness, contrast, gamma. */
     rgb = applyMonitorParams(rgb);
+
     /* Render. */
     gl_FragColor = vec4(rgb, 1.);
 }
@@ -197,7 +209,7 @@ function effectInit(gl, shader) {
 <body>
 
 <h1>PAL experiment</h1>
-<canvas id="canvas" width="512" height="512"></canvas>
+<canvas id="canvas" width="600" height="600"></canvas>
 
 </body>
 </html>
