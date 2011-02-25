@@ -7,11 +7,13 @@ precision highp float;
 varying vec2 vPosition;
 uniform sampler2D uScreen;
 uniform sampler2D uPalette;
+uniform float uOutputHeight;
 
 const float REFERENCE_PAL_GAMMA = 2.8;
 const float DISPLAY_SYSTEM_GAMMA = 2.0;
 const float BRIGHTNESS = 0.;
 const float CONTRAST = 1.;
+const float PI = 3.1415926535789;
 
 const mat3 YUV2RGB = mat3(
         1.     ,  1.     , 1.     ,
@@ -73,14 +75,22 @@ vec3 applyMonitorParams(vec3 rgb) {
 }
 
 /* Generate the mask to simulate scanlines. */
-float scanlineFilter(in float row) {
-    float x1 = sin(2. * 3.14159 * row);
-    return .8 - x1 * .2;
+float scanlineFilter(in float row, in float offset) {
+    float x1 = sin(2. * PI * (row - offset * .5));
+    float x2 = sin(2. * PI * (row + offset * .5));
+    /* Crudely estimate average value under pixel.
+     * We could integrate the function and then divide by
+     * offset, but maybe this does for now. */
+    float x = (x1 + x2) * .5;
+    return .9 - x * .1;
 }
 
 void main(void) {
     /* Position is from 0 .. 256 in c64-screen texture coords */
-    vec2 fpos = (vPosition * .5 + .5) * 256. - .5;
+    vec2 fpos = (vPosition * .5 + .5) * 256.;
+    /* Offset by 1/2 units to avoid 2 pixel high top during interpolation. */
+    float offset = 256. / uOutputHeight * .5;
+    fpos.y += offset;
 
     ivec2 ipos = ivec2(fpos);
     /* The line immediately before current line on display screen. */
@@ -90,7 +100,7 @@ void main(void) {
     /* Linear interpolation. */
     vec3 rgb = mix(rgbBefore, rgbCurrent, fract(fpos.y));
     /* Scanline mask. */
-    rgb *= scanlineFilter(fract(fpos.y * .5));
+    rgb *= scanlineFilter(fract(fpos.y), offset);
     /* Brightness, contrast, gamma. */
     rgb = applyMonitorParams(rgb);
 
@@ -122,11 +132,11 @@ function generatePalette(gl) {
         1110./1850., 1520./1850., 1110./1850., 1340./1850.
     ];
 
-    var ANGLE_RED =  112.5 / 180.*3.14159;
-    var ANGLE_GRN = -135.0 / 180.*3.14159;
-    var ANGLE_BLU =    0.0 / 180.*3.14159;
-    var ANGLE_ORN =  -45.0 / 180.*3.14159;
-    var ANGLE_BRN =  157.5 / 180.*3.14159;
+    var ANGLE_RED =  112.5 / 180.*Math.PI;
+    var ANGLE_GRN = -135.0 / 180.*Math.PI;
+    var ANGLE_BLU =    0.0 / 180.*Math.PI;
+    var ANGLE_ORN =  -45.0 / 180.*Math.PI;
+    var ANGLE_BRN =  157.5 / 180.*Math.PI;
 
     var c64Palette = [
         [ lum[0], ANGLE_ORN, -0],
@@ -150,7 +160,7 @@ function generatePalette(gl) {
     var pixels = new Uint8Array(16 * 16 * 4);
     var index = 0;
     for (var y = 0; y < 16; y ++) {
-        var angle = y / 16 * 3.14159 * .5;
+        var angle = y / 16 * Math.PI * .5;
         for (var x = 0; x < 16; x ++) {
             var p = c64Palette[x];
 
@@ -202,6 +212,9 @@ function effectInit(gl, shader) {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, paletteTexture);
     gl.uniform1i(gl.getUniformLocation(shader, "uPalette"), 1);
+   
+    var canvas = document.getElementById("canvas"); 
+    gl.uniform1f(gl.getUniformLocation(shader, "uOutputHeight"), canvas.height);
     effectStart(gl, shader);
 }
 </script>
@@ -209,7 +222,7 @@ function effectInit(gl, shader) {
 <body>
 
 <h1>PAL experiment</h1>
-<canvas id="canvas" width="600" height="600"></canvas>
+<canvas id="canvas" width="400" height="400"></canvas>
 
 </body>
 </html>
