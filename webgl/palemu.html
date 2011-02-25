@@ -1,0 +1,203 @@
+<html><head><title>PAL-emulation experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+uniform sampler2D uScreen;
+uniform sampler2D uPalette;
+
+const float PAL_REFERENCE_GAMMA = 2.8;
+const float DISPLAY_SYSTEM_GAMMA = 2.0;
+const float BRIGHTNESS = 0.;
+const float CONTRAST = 1.;
+
+const mat3 YUV2RGB = mat3(
+        1.,        1.,      1.,
+        0., -0.39465, 2.03211,
+        1.13983, -0.58060,  0.
+);
+
+const float YL = 0.25;
+const float YH = 0.5;
+
+vec3 getPixel(vec2 position) {
+    /* Yields color index 0 .. 15 */
+    float index = texture2D(uScreen, position).x * 256.;
+
+    /* Select odd/even palette. */
+    float row = fract(position.y * 128.) * .35;
+
+    /* Lookup vec2(color, rotation) palette index. */
+    vec3 yuv = texture2D(uPalette, vec2((index + .5) / 16., row)).rgb;
+
+    /* Normalize */
+    return yuv - vec3(0., .5, .5);
+}
+
+/* Simple approximation of horizontal bandwidth at y, u and v. */
+vec3 getHorizontallyFilteredPixel(vec2 position) {
+    vec3 yuv0 = getPixel(position - vec2(-1./256., 0.));
+    vec3 yuv1 = getPixel(position                     );
+    vec3 yuv2 = getPixel(position + vec2(-1./256., 0.));
+
+    return vec3(
+        (yuv0.r + yuv2.r) * YL + yuv1.r * YH,
+        (yuv0.gb + yuv1.gb + yuv2.gb) / 3.
+    );
+}
+
+/* PAL alternating lines UV average. */
+vec3 getFilteredPixel(vec2 position) {
+    vec3 yuvBefore = getHorizontallyFilteredPixel(position - vec2(0., 1./256.));
+    vec3 yuvCurrent = getHorizontallyFilteredPixel(position);
+    vec3 yuv = vec3(yuvCurrent.r, .5 * (yuvBefore.gb + yuvCurrent.gb));
+    return YUV2RGB * yuv;
+}
+
+/* Brightness, contrast, gamma. */
+vec3 applyMonitorParams(vec3 rgb) {
+    rgb = (rgb + BRIGHTNESS) * CONTRAST;
+    float g = PAL_REFERENCE_GAMMA / DISPLAY_SYSTEM_GAMMA;
+    return vec3(pow(rgb.r, g), pow(rgb.g, g), pow(rgb.b, g));
+}
+
+/* Generate the mask to simulate scanlines. */
+float scanlineFilter(float row) {
+    float x = sin(row * 512. * 3.14159);
+    return .9 - x * .1;
+}
+
+void main(void) {
+    /* Position is from 0 .. 1 */
+    vec2 pos = vPosition * .5 + .5;
+    /* The line immediately before current line on display screen. */
+    vec3 rgbBefore = getFilteredPixel(pos - vec2(0., 1./512.));
+    /* The current line. */
+    vec3 rgbCurrent = getFilteredPixel(pos);
+    /* Linear interpolation. */
+    vec3 rgb = mix(rgbBefore, rgbCurrent, fract(pos.y * 512.));
+    /* Scanline mask. */
+    rgb *= scanlineFilter(pos.y);
+    /* Brightness, contrast, gamma. */
+    rgb = applyMonitorParams(rgb);
+    /* Render. */
+    gl_FragColor = vec4(rgb, 1.);
+}
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+var SATURATION = 0.5;
+
+function generatePalette(gl) {
+    var lum = [
+         540./1850., 1850./1850.,  900./1850., 1340./1850.,
+         980./1850., 1150./1850.,  810./1850., 1520./1850.,
+         980./1850.,  810./1850., 1150./1850.,  900./1850.,
+        1110./1850., 1520./1850., 1110./1850., 1340./1850.
+    ];
+
+    var ANGLE_RED =  112.5 / 180.*3.14159;
+    var ANGLE_GRN = -135.0 / 180.*3.14159;
+    var ANGLE_BLU =    0.0 / 180.*3.14159;
+    var ANGLE_ORN =  -45.0 / 180.*3.14159;
+    var ANGLE_BRN =  157.5 / 180.*3.14159;
+
+    var c64Palette = [
+        [ lum[0], ANGLE_ORN, -0],
+        [ lum[1], ANGLE_BRN,  0],
+        [ lum[2], ANGLE_RED,  1],
+        [ lum[3], ANGLE_RED, -1],
+        [ lum[4], ANGLE_GRN, -1],
+        [ lum[5], ANGLE_GRN,  1],
+        [ lum[6], ANGLE_BLU,  1],
+        [ lum[7], ANGLE_BLU, -1],
+        [ lum[8], ANGLE_ORN, -1],
+        [ lum[9], ANGLE_BRN,  1],
+        [lum[10], ANGLE_RED,  1],
+        [lum[11], ANGLE_RED, -0],
+        [lum[12], ANGLE_GRN, -0],
+        [lum[13], ANGLE_GRN,  1],
+        [lum[14], ANGLE_BLU,  1],
+        [lum[15], ANGLE_BLU, -0]
+    ];
+
+    var pixels = new Uint8Array(16 * 16 * 4);
+    var index = 0;
+    for (var y = 0; y < 16; y ++) {
+        var angle = y / 16 * 3.14159 * .5;
+        for (var x = 0; x < 16; x ++) {
+            var p = c64Palette[x];
+
+            var u = p[2] * SATURATION * Math.cos(p[1] + angle) * .5;
+            var v = p[2] * SATURATION * Math.sin(p[1] + angle) * .5;
+
+            pixels[index ++] = Math.round(p[0] * 255);
+            pixels[index ++] = Math.round((u + .5) * 255);
+            pixels[index ++] = Math.round((v + .5) * 255);
+            index ++;
+        }
+    }
+
+    var texture = gl.createTexture();
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 16, 16, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    return texture;
+}
+
+function generateC64Screen(gl) {
+    var pixels = new Uint8Array(256 * 256 * 4);
+    var index = 0;
+    for (var y = 0; y < 256; y ++) {
+        for (var x = 0; x < 256; x ++) {
+             pixels[index] = (y & 1) == 0 ? 0xf ^ (y >> 4) : x >> 4;
+             index += 4;
+        }
+    }
+
+    var texture = gl.createTexture();
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+    return texture;
+}
+
+function effectInit(gl, shader) {
+    var paletteTexture = generatePalette(gl);
+    var screenTexture = generateC64Screen(gl);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, screenTexture);
+    gl.uniform1i(gl.getUniformLocation(shader, "uScreen"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, paletteTexture);
+    gl.uniform1i(gl.getUniformLocation(shader, "uPalette"), 1);
+    effectStart(gl, shader);
+}
+</script>
+</head>
+<body>
+
+<h1>PAL experiment</h1>
+<canvas id="canvas" width="512" height="512"></canvas>
+
+</body>
+</html>
