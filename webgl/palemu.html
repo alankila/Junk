@@ -29,7 +29,7 @@ vec3 getPixel(ivec2 position) {
     float index = texture2D(uScreen, (vec2(position) + .5) / 256.).x * 256.;
 
     /* Select odd/even palette. */
-    float row = fract(float(position.y) / 2.);
+    float row = .5 - fract(float(position.y) / 2.) * .4;
 
     /* Lookup vec2(color, rotation) palette index. */
     vec3 yuv = texture2D(uPalette, vec2((index + .5) / 16., row)).rgb;
@@ -46,7 +46,7 @@ vec3 getHorizontallyFilteredPixel(ivec2 position) {
 
     return vec3(
         (yuv0.r + yuv2.r) * YL + yuv1.r * YH,
-        (yuv0.gb + yuv1.gb + yuv2.gb) / 3.
+        (yuv0.gb + yuv1.gb + yuv2.gb) * .33
     );
 }
 
@@ -160,7 +160,7 @@ function generatePalette(gl) {
     var pixels = new Uint8Array(16 * 16 * 4);
     var index = 0;
     for (var y = 0; y < 16; y ++) {
-        var angle = y / 16 * Math.PI * .5;
+        var angle = (y - 8.) / 16 * Math.PI * .5;
         for (var x = 0; x < 16; x ++) {
             var p = c64Palette[x];
 
@@ -176,6 +176,7 @@ function generatePalette(gl) {
 
     var texture = gl.createTexture();
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 16, 16, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -188,13 +189,14 @@ function generateC64Screen(gl) {
     var index = 0;
     for (var y = 0; y < 256; y ++) {
         for (var x = 0; x < 256; x ++) {
-             pixels[index] = (y & 1) == 0 ? 0xf ^ (y >> 4) : x >> 4;
+             pixels[index] = (y & 1) == 0 ? y >> 4 : x >> 4;
              index += 4;
         }
     }
 
     var texture = gl.createTexture();
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
