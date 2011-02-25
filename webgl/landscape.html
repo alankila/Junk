@@ -21,8 +21,6 @@ varying vec2 vPosition;
 const int MAP_ITERATIONS = 256;
 /* Convert distance between ray and terrain position to "safe" advancing step. */
 const float MARCH_SPEED = 0.5;
-/* Level Of Detail: how far to render until dropping terrain features. */
-const float LOD = 2.0;
 /* When ray reaches close enough to terrain, stop marching */
 const float STOP_CONDITION = 0.0025;
 /* Render distance. */
@@ -96,12 +94,12 @@ vec4 fbmQuilez2d(in vec2 pos, in float spikiness, in int lastIteration) {
 
 vec4 getNoise(in vec2 pos, in int lastIteration) {
     vec3 o = fbmPerlin2d(pos, lastIteration).xyz;
-    return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
+    return vec4(normalize(cross(vec3(-1., 0., o.z), vec3(0., -1., o.y))), o.x);
 }
 
 vec4 getTerrain(in vec2 pos) {
     vec3 o = fbmQuilez2d(pos * (1./512.), 0.5, 4).xyz * 2.;
-    return vec4(normalize(cross(vec3(-1., 0., o.y), vec3(0., -1., o.z))), o.x);
+    return vec4(normalize(cross(vec3(-1., 0., o.z), vec3(0., -1., o.y))), o.x);
 }
 
 float getTerrainAo(in vec2 pos) {
@@ -139,12 +137,8 @@ float getWaterLevel(in vec3 pos) {
  * The stop condition also gets progressively coarser as
  * the ray gains distance to viewer. This should naturally "antialias"
  * the scenery at distance.
- *
- * Output: LOD value for terrain calculation.
  */
 float intersectTerrain(inout vec3 pos, in vec3 dir) {
-    /* Dynamic LOD during marching:
-     * After distance to scene has been acquired, update LOD. */
     float t = 0.0;
     for (int i = 0; i < MAP_ITERATIONS; i ++) {
         float height = pos.z - getTerrain(pos.xy).w;
@@ -178,24 +172,22 @@ float intersectTerrain(inout vec3 pos, in vec3 dir) {
 float calculateShade(in vec3 pos) {
     /* add shadow: use sampling in an attempt of trying to find out the
      * maximum amount the ray from terrain point to sun is goes under terrain. */
-    float shadow = 0.;
-    float t = 0.01;
+    float shadow = 1.;
+    float t = 1.0;
 
     vec3 sun = getSun().xyz;
-    vec3 testpos = pos;
     for (int i = 0; i < 5; i ++) {
-	testpos += sun * t;
+	vec3 testpos = pos + sun * t;
 	/* Positive -> above ground. */
 	float rayHeight = testpos.z - getTerrain(testpos.xy).w;
-	float inShadow = rayHeight;
-	shadow += min(inShadow, 0.);
-	if (inShadow < -0.01) {
-	    break;
+	float inShadow = rayHeight / t;
+	if (inShadow < 0.) {
+	    shadow *= max(1. + inShadow * 10., 0.);
 	}
-	t *= 1.4;
+	t *= .5;
     }
 
-    return clamp(100. * shadow + 1., 0., 1.);
+    return shadow;
 }
 
 /* Evaluate rules to find color of terrain point.
@@ -333,7 +325,7 @@ vec3 getWaterColor(in vec3 pos, in vec3 dir) {
 
     /* Refract scenery. */
     vec3 refractionPos = pos;
-    vec3 refraction = dir;//refract(dir, normal, 0.7);
+    vec3 refraction = refract(dir, normal, 0.7);
     float refractedLength = intersectTerrain(refractionPos, refraction);
     vec3 refractedTerrain = getTerrainColor(refractionPos, refraction);
 
