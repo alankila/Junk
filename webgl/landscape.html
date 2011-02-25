@@ -190,38 +190,46 @@ float calculateShade(in vec3 pos) {
     return shadow;
 }
 
+/**
+ * Rotate n1 according to difference between
+ * n2 and vec3(0., 0., 1.)
+ */
+vec3 rotateNormal(in vec3 n1, in vec3 n2) {
+    /* Tilt the coarse surface normal with detail texture normal. */
+    /* Find rotation axis. */
+    vec3 u = cross(vec3(0., 0., 1.), n2);
+    /* Really: dot(noise.xyz, vec3(0., 0., 1.)) */
+    float cosTheta = n2.z;
+    /* Rodrigues's rotation formula. */
+    return n1 * cosTheta + cross(u, n1) * sqrt(1. - cosTheta * cosTheta) + u * dot(u, n1) * (1. - cosTheta);
+}
+
 /* Evaluate rules to find color of terrain point.
  * Output: RGB. */
 vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     /* Get surface properties. */
     vec3 normal = getTerrain(pos.xy).xyz;
     float ao = getTerrainAo(pos.xy);
-    vec4 noise = fbmQuilez2d(pos.xy / 32., 2.0, 8) * 2.;
-    noise = vec4(normalize(cross(vec3(-1., 0., noise.y), vec3(0., -1., noise.z))), noise.x);
+    vec4 noise = fbmQuilez2d(pos.xy / 16., 2.0, 8) * 2.;
+    noise = vec4(normalize(cross(vec3(-1., 0., noise.z), vec3(0., -1., noise.y))), noise.x);
 
-    /* Tilt the coarse surface normal with detail texture normal. */
-    /* Find rotation axis. */
-    vec3 u = cross(vec3(0., 0., 1.), noise.xyz);
-    /* Really: dot(noise.xyz, vec3(0., 0., 1.)) */
-    float cosTheta = noise.z;
-    /* Rodrigues's rotation formula. */
-    normal = normal * cosTheta + cross(u, normal) * sqrt(1. - cosTheta * cosTheta) + u * dot(u, normal) * (1. - cosTheta);
+    normal = rotateNormal(normal, noise.xyz);
     
     /* Determine terrain type. */
     float overWater = smoothstep(WATER_LEVEL, WATER_LEVEL + 0.1, pos.z);
     float sandOrRock = smoothstep(0.75, 0.70, normal.z - pos.z * .25 - overWater);
     //float foliage = sandOrRock * smoothstep(0.96, 0.97, normal.z);
-    float rockOrSnow = smoothstep(1.03, 1.04, normal.z + pos.z * .1) * overWater;
+    float rockOrSnow = smoothstep(1.02, 1.03, normal.z + pos.z * .1) * overWater;
 
     /* Sand texture */
     vec4 terrain = vec4(0.2, 0.2, 0.14, 0.) * pos.z;
 
     /* Rock texture */
-    vec4 rockNoise = getNoise(pos.xy * 4., 1);
-    vec4 rockTexture = vec4(.05, .04, .025, 0.) * noise.w;
-    rockTexture += vec4(.03, .015, .008, 0.08) * rockNoise.w * rockNoise.w;
+    float bump = (noise.w - .25) * 2.;
+    bump = bump * bump;
+    vec4 rockTexture = vec4(.025, .02, .015, .01) * noise.w;
     terrain = mix(terrain, rockTexture, sandOrRock);
-//    normal = normalize(mix(normal, rockNoise.xyz,  sandOrRock * (1. - rockOrSnow) * .1));
+    //normal = rotateNormal(normal, rockNoise.xyz);
 
     /* Foliage: if not under water, or above snow line, and terrain tilt is suitable. */
     //vec4 grass = vec4(0.01, 0.02, 0.00, 0.);
@@ -248,10 +256,10 @@ float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
     vec3 pos = vec3(spos, 0.);
     darkness = 1. - getNoise(pos.xy * (1./128.) + 1., 4).w * .5;
     for (int j = 0; j < 10; j ++) {
-	float o = getNoise((pos.xy + vec2(uTime*.04, 1.)) / 128., 4).w;
+	float o = getNoise((pos.xy + vec2(uTime*.04, 1.)) / 128., 5).w;
 
 	/* is there cloud above the ray? */
-	float dz = o - pos.z - 0.5;
+	float dz = o - pos.z - 0.4;
 	float step = max(0.03, abs(dz) * MARCH_SPEED);
 	opacity += max(dz, 0.);
 
@@ -261,7 +269,7 @@ float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
 	}
     }
 
-    return opacity;
+    return opacity * .7;
 }
 
 /* Render sky.
@@ -349,7 +357,7 @@ vec3 cameraExposure(vec3 terrain, vec3 dir) {
      * Lowest brightness adjustment is (1.0, 0.5, 0.5). */
     vec3 sunColor = vec3(
 	1.0,
-	1.0 + clamp(sun.z - 0.3, -0.8, 0.0),
+	1.0 + clamp(sun.z - 0.2, -0.7, 0.0),
 	1.0 + clamp(sun.z - 0.4, -0.9, 0.0)
     );
 
@@ -382,12 +390,12 @@ vec3 intersectWater(vec3 pos, vec3 dir, inout float t) {
 }
 
 void main(void) {
-    //gl_FragColor = vec4(texture2D(uNoise, vPosition * .5 * .25).www, 1.);
+    //gl_FragColor = vec4(texture2D(uNoise, vPosition * .5).xxx, 1.);
     //gl_FragColor = texture2D(uWatermap, vPosition);
-    //gl_FragColor = vec4(fbmPerlin2d(vPosition * .5, 8).w * vec3(.1, 1., 1.), 1.);
-    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2d(vPosition*4., 8).xyz, 1.);
-    //gl_FragColor = vec4(fbmQuilez2d(vPosition, 1., 8).w * vec3(1., 1., 1.) * .5, 1.);
-    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2d(vPosition, 1., 8).xyz * .5, 1.);
+    //gl_FragColor = vec4(fbmPerlin2d(vPosition / 16., 8).xxx, 1.);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmPerlin2d(vPosition / 16., 8).xyz, 1.);
+    //gl_FragColor = vec4(fbmQuilez2d(vPosition / 16., 1., 8).xxx, 1.);
+    //gl_FragColor = vec4(vec3(.5, .5, .5) + .5 * fbmQuilez2d(vPosition / 16., 1., 8).xyz, 1.);
     //return;
 
     /* Calculate position of camera. */
