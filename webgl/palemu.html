@@ -100,7 +100,7 @@ void main(void) {
     /* Linear interpolation. */
     vec3 rgb = mix(rgbBefore, rgbCurrent, fract(fpos.y));
     /* Scanline mask. */
-    rgb *= scanlineFilter(fract(fpos.y), offset);
+    rgb *= scanlineFilter(fract(fpos.y - offset), offset);
     /* Brightness, contrast, gamma. */
     rgb = applyMonitorParams(rgb);
 
@@ -222,7 +222,7 @@ function effectInit(gl, shader) {
 <body>
 
 <h1>PAL experiment</h1>
-<canvas id="canvas" width="400" height="400"></canvas>
+<canvas id="canvas" width="512" height="512"></canvas>
 
 </body>
 </html>
