@@ -18,13 +18,13 @@ uniform sampler2D uNoise;
 varying vec2 vPosition;
 
 /* How many march iterations per ray. */
-const int MAP_ITERATIONS = 256;
+const int MAP_ITERATIONS = 512;
 /* Convert distance between ray and terrain position to "safe" advancing step. */
 const float MARCH_SPEED = 0.5;
 /* When ray reaches close enough to terrain, stop marching */
 const float STOP_CONDITION = 0.0025;
 /* Render distance. */
-const float FOG = 6.;
+const float FOG = 10.;
 /* Water level */
 const float WATER_LEVEL = 0.6;
 /* Water surface precision */
@@ -43,9 +43,21 @@ vec3 cross(in vec3 a, in vec3 b) {
  * Output: normalized vector.
  */
 vec4 getSun() {
-    float sunPhase = uTime * .01;
+    float sunPhase = uTime * .1;
     float z = cos(sunPhase) * 0.7071;
     return vec4(sin(sunPhase) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
+}
+
+vec3 getSunColor() {
+    vec4 sun = getSun();
+    /* As sun goes down, turn shades towards red.
+     * Lowest brightness adjustment is (1.0, 0.5, 0.5). */
+    vec3 sunColor = vec3(
+	1.0,
+	1.0 + clamp(sun.z - 0.2, -0.7, 0.0),
+	1.0 + clamp(sun.z - 0.4, -0.9, 0.0)
+    );
+    return sunColor * sun.w;
 }
 
 /* Return gradient noise value, derivates, and ambient occlusion if used for heightmap.
@@ -245,10 +257,13 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     float specular = max(dot(reflection, dir), 0.);
     float shade = calculateShade(pos);
 
+    vec3 sunColor = getSunColor();
+
     /* Modified Phong shading. The ambient level is fixed at .1.
      * The shadow masks out diffuse and the specular component. */
-    return terrain.xyz * (.1 * ao + diffuse * shade)
-	 + shade * terrain.w * pow(specular, 20.);
+    return sunColor *
+	(terrain.xyz * (.1 * ao + diffuse * shade)
+	 + shade * terrain.w * pow(specular, 20.));
 }
 
 float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
@@ -269,7 +284,23 @@ float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
 	}
     }
 
-    return opacity * .7;
+    return opacity * .2;
+}
+
+/* Render stars.
+ * Output: RGB.
+ */
+vec3 getStars(vec3 dir) {
+    float starNoise = getNoise(vec2(acos(dir.z), atan(dir.x, dir.y)), 2).w;
+    float red = starNoise - 0.80;
+    float grn = starNoise - 0.83;
+    float blu = starNoise - 0.86;
+
+    return vec3(
+	max(0., 0.02 - red * red),
+	max(0., 0.02 - grn * grn),
+	max(0., 0.02 - blu * blu)
+    );
 }
 
 /* Render sky.
@@ -277,13 +308,13 @@ float getCloudOpacity(vec2 spos, vec3 dir, out float darkness) {
  */
 vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     vec4 sun = getSun();
+    vec3 sunColor = getSunColor();
     float sunAngle = max(dot(dir, sun.xyz), 0.);
     float sunDisc = pow(sunAngle, 40.);
     float skyBrightness = clamp(1. - dir.z, 0., 1.);
 
-    vec3 skyColor = (vec3(skyBrightness, skyBrightness, 1.) * .1 + sunDisc);
-    float starNoise = getNoise(vec2(acos(dir.z), atan(dir.x, dir.y)) * .5, 1).w;
-    skyColor += vec3(.05, .05, .05) / sun.w * smoothstep(0.75, 0.85, starNoise);
+    vec3 skyColor = (vec3(skyBrightness, skyBrightness, 1.) * .1 + sunDisc) * sunColor;
+    skyColor += getStars(dir);
 
     float cloudTotal = 0.;
     float t = (2.5 - pos.z) / dir.z;
@@ -293,7 +324,7 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
     float cloudOpacity = getCloudOpacity(cloudCoord, dir, darkness);
     t /= FOG;
     cloudOpacity /= (1. + t * t);
-    return mix(skyColor, vec3(.3, .3, .3) * darkness, cloudOpacity);
+    return mix(skyColor, sunColor * darkness, cloudOpacity);
 }
 
 /* Add fog to color.
@@ -305,7 +336,7 @@ vec3 getSkyColor(in vec3 pos, in vec3 dir) {
  */
 vec3 applyFog(in vec3 color, in float distance) {
     distance /= FOG;
-    return mix(color, vec3(.1, .1, .1), distance*distance);
+    return mix(color, vec3(.1, .1, .1) * getSunColor(), distance*distance);
 }
 
 /* Calculate water color based on reflection and refraction.
@@ -344,25 +375,16 @@ vec3 cameraExposure(vec3 terrain, vec3 dir) {
     vec4 sun = getSun();
     /* We want Sun to always be 2x exposed.
      * 
-     * We don't know much about the world geometry here, but we know that
+     * We don't know about the world geometry here, but we know that
      * the Sun shines at the brightness level sun.w. If the user views too
-     * close to the Sun, we progressively diminish the sun's brightness
-     * term until it is no more than 2 at directly looking at Sun.
-     * If sun, however, is dimmer than 2, then we just use whatever value it
-     * gives.
+     * close to the Sun, we reduce exposure accordingly.
      */
-    float exposureControl = mix(sun.w, min(sun.w, 2.), max(dot(sun.xyz, dir), 0.));
+    float exposureControl = 1. / max(1., sun.w * max(dot(sun.xyz, dir), 0.));
 
-    /* As sun goes down, turn shades towards red.
-     * Lowest brightness adjustment is (1.0, 0.5, 0.5). */
-    vec3 sunColor = vec3(
-	1.0,
-	1.0 + clamp(sun.z - 0.2, -0.7, 0.0),
-	1.0 + clamp(sun.z - 0.4, -0.9, 0.0)
-    );
-
+    /* our dither pattern should really vary in time... */
+    float dither = getNoise(vPosition, 1).x / 256.;
     /* sqrt here is gamma correction! */
-    return sqrt(terrain * sunColor * exposureControl);
+    return sqrt(terrain * exposureControl) + dither;
 }
 
 vec3 intersectWater(vec3 pos, vec3 dir, inout float t) {
