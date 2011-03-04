@@ -170,7 +170,7 @@ function generatePalette(gl) {
     var pixels = new Uint8Array(16 * 16 * 4);
     var index = 0;
     for (var y = 0; y < 16; y ++) {
-        var angle = (y - 8.) / 16 * Math.PI * .5;
+        var angle = (y - 8.) / 16 * Math.PI;
         for (var x = 0; x < 16; x ++) {
             var p = c64Palette[x];
 
