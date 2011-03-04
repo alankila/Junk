@@ -11,10 +11,16 @@ uniform float uOutputHeight;
 
 const float REFERENCE_PAL_GAMMA = 2.8;
 const float DISPLAY_SYSTEM_GAMMA = 2.0;
-const float BRIGHTNESS = 0.;
-const float CONTRAST = 1.;
-const float PI = 3.1415926535789;
+const float BRIGHTNESS = -0.03;
+const float CONTRAST = 0.8;
+const float SATURATION = 0.5;
+const float PI = 3.14159265358979323846264338327950288419716939937510;
 
+/* Screen start and end coordinates. */
+const vec2 SCREENTOPLEFT = vec2(0., 0.);
+const vec2 SCREENSIZE = vec2(256., 256.);
+
+/* Conversion to RGB */
 const mat3 YUV2RGB = mat3(
         1.     ,  1.     , 1.     ,
         0.     , -0.39465, 2.03211,
@@ -24,12 +30,13 @@ const mat3 YUV2RGB = mat3(
 const float YL = 0.25;
 const float YH = 0.5;
 
+/* Convert C64 palette index at given position to YUV color. */
 vec3 getPixel(ivec2 position) {
     /* Yields color index 0 .. 15 */
-    float index = texture2D(uScreen, (vec2(position) + .5) / 256.).x * 256.;
+    float index = texture2D(uScreen, (vec2(position) + .5) / 512.).x * 256.;
 
     /* Select odd/even palette. */
-    float row = .51 - fract(float(position.y) / 2.) * .25;
+    float row = .51 - fract(float(position.y) * .5) * .25;
 
     /* Lookup vec2(color, rotation) palette index. */
     vec3 yuv = texture2D(uPalette, vec2((index + .5) / 16., row)).rgb;
@@ -46,11 +53,12 @@ vec3 getHorizontallyFilteredPixel(ivec2 position) {
 
     return vec3(
         (yuv0.r + yuv2.r) * YL + yuv1.r * YH,
-        (yuv0.gb + yuv1.gb + yuv2.gb) * .33
+        (yuv0.gb + yuv1.gb + yuv2.gb) * .33 * SATURATION
     );
 }
 
-/* PAL alternating lines UV average. */
+/* PAL alternating lines UV average,
+ * RGB output with physical intensity */
 vec3 getFilteredPixel(ivec2 position) {
     vec3 yuvBefore = getHorizontallyFilteredPixel(position + ivec2(0, -1));
     vec3 yuvCurrent = getHorizontallyFilteredPixel(position);
@@ -65,7 +73,7 @@ vec3 getFilteredPixel(ivec2 position) {
 }
 
 /* Brightness, contrast, gamma. */
-vec3 applyMonitorParams(vec3 rgb) {
+vec3 applyPCMonitorParams(vec3 rgb) {
     rgb = (rgb + BRIGHTNESS) * CONTRAST;
     return vec3(
         pow(rgb.r, 1./DISPLAY_SYSTEM_GAMMA),
@@ -74,6 +82,7 @@ vec3 applyMonitorParams(vec3 rgb) {
     );
 }
 
+/* Scanline function is .9 + .1 * cos(2 * pi * y) */
 float scanlineIntegral(in float x) {
     return .9 * x + .1 * cos(2. * PI * x) / (2. * PI);
 }
@@ -86,24 +95,25 @@ float scanlineFilter(in float row, in float offset) {
 }
 
 void main(void) {
-    /* Position is from 0 .. 256 in c64-screen texture coords */
-    vec2 fpos = (vPosition * .5 + .5) * 256.;
-    /* Offset by 1/2 units to avoid 2 pixel high top during interpolation. */
-    float offset = 256. / uOutputHeight * .5;
-    fpos.y += offset;
+    /* Position in c64-screen texture coords */
+    vec2 fpos = (vPosition * vec2(.5, -.5) + .5) * SCREENSIZE + SCREENTOPLEFT;
 
+    /* Offset by 1/2 units to avoid 2 pixel high top during interpolation. */
+    float offset = SCREENSIZE.y / uOutputHeight * .5;
+    fpos.y += offset;
     ivec2 ipos = ivec2(fpos);
+
     /* The line immediately before current line on display screen. */
     vec3 rgbBefore = getFilteredPixel(ipos + ivec2(0, -1));
     /* The current line. */
     vec3 rgbCurrent = getFilteredPixel(ipos);
-    /* Linear interpolation.
-     * FIXME: this should actually generate the scanlines! */
+
+    /* Linear interpolation and scanlines. */
     vec3 rgb = mix(rgbBefore, rgbCurrent, fract(fpos.y));
-    /* Scanline mask. FIXME: see above */
     rgb *= scanlineFilter(fract(fpos.y - offset), offset);
+
     /* Brightness, contrast, gamma. */
-    rgb = applyMonitorParams(rgb);
+    rgb = applyPCMonitorParams(rgb);
 
     /* Render. */
     gl_FragColor = vec4(rgb, 1.);
@@ -123,14 +133,12 @@ void main(void) {
 
 <script type="text/javascript" src="webgl.js"></script>
 <script type="text/javascript">
-var SATURATION = 0.6;
-
 function generatePalette(gl) {
     var lum = [
-         540./1850., 1850./1850.,  900./1850., 1340./1850.,
-         980./1850., 1150./1850.,  810./1850., 1520./1850.,
-         980./1850.,  810./1850., 1150./1850.,  900./1850.,
-        1110./1850., 1520./1850., 1110./1850., 1340./1850.
+         540., 1850.,  900., 1340.,
+         980., 1150.,  810., 1520.,
+         980.,  810., 1150.,  900.,
+        1110., 1520., 1110., 1340.
     ];
 
     var ANGLE_RED =  112.5 / 180.*Math.PI;
@@ -157,6 +165,7 @@ function generatePalette(gl) {
         [lum[14], ANGLE_BLU,  1],
         [lum[15], ANGLE_BLU, -0]
     ];
+    var maxLum = c64Palette[1][0];
 
     var pixels = new Uint8Array(16 * 16 * 4);
     var index = 0;
@@ -165,10 +174,10 @@ function generatePalette(gl) {
         for (var x = 0; x < 16; x ++) {
             var p = c64Palette[x];
 
-            var u = p[2] * SATURATION * Math.cos(p[1] + angle) * .5;
-            var v = p[2] * SATURATION * Math.sin(p[1] + angle) * .5;
+            var u = p[2] * Math.cos(p[1] + angle) * .5;
+            var v = p[2] * Math.sin(p[1] + angle) * .5;
 
-            pixels[index ++] = Math.round(p[0] * 255);
+            pixels[index ++] = Math.round(p[0] / maxLum * 255);
             pixels[index ++] = Math.round((u + .5) * 255);
             pixels[index ++] = Math.round((v + .5) * 255);
             index ++;
@@ -186,10 +195,10 @@ function generatePalette(gl) {
 }
 
 function generateC64Screen(gl) {
-    var pixels = new Uint8Array(256 * 256 * 4);
+    var pixels = new Uint8Array(512 * 512 * 4);
     var index = 0;
-    for (var y = 0; y < 256; y ++) {
-        for (var x = 0; x < 256; x ++) {
+    for (var y = 0; y < 512; y ++) {
+        for (var x = 0; x < 512; x ++) {
              pixels[index] = (y & 1) == 0 ? y >> 4 : x >> 4;
              index += 4;
         }
@@ -197,9 +206,9 @@ function generateC64Screen(gl) {
 
     var texture = gl.createTexture();
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
@@ -225,7 +234,7 @@ function effectInit(gl, shader) {
 <body>
 
 <h1>PAL experiment</h1>
-<canvas id="canvas" width="280" height="280"></canvas>
+<canvas id="canvas" width="512" height="512"></canvas>
 
 </body>
 </html>
