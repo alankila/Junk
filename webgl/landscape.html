@@ -43,7 +43,7 @@ vec3 cross(in vec3 a, in vec3 b) {
  * Output: normalized vector.
  */
 vec4 getSun() {
-    float sunPhase = uTime * .1;
+    float sunPhase = uTime * .01;
     float z = cos(sunPhase) * 0.7071;
     return vec4(sin(sunPhase) * 0.7071, 0.7071, z, max(SUN_INTENSITY * z + 0.1, 0.05));
 }
