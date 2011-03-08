@@ -17,9 +17,9 @@ varying vec2 vPosition;
 
 const vec3 LIGHT = vec3(0.707, 0.707, 0.);
 const vec3 UP = vec3(0.0, 0.0, 1.0);
-const int ITERATIONS = 16;
+const int ITERATIONS = 20;
 const int RAYITERATIONS = 256;
-const float DETAIL = 0.0025;
+const float DETAIL = 0.002;
 
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
@@ -31,7 +31,7 @@ vec3 cross(in vec3 a, in vec3 b) {
 }
 
 float mandelboxDistance(in vec3 pos, out float coloringType) {
-    vec4 iter = vec4(pos, abs(uScale));
+    vec4 iter = vec4(pos, uScale);
 
     coloringType = 0.;
     for (int i = 0; i < ITERATIONS; i ++) {
@@ -44,39 +44,36 @@ float mandelboxDistance(in vec3 pos, out float coloringType) {
     }
     coloringType /= float(ITERATIONS);
 
-    return length(iter.xyz) / iter.w;
+    iter = abs(iter);
+    return max(max(iter.x, iter.y), iter.z) / iter.w;
 }
 
-void intersectMandelbox(inout vec3 pos, in vec3 dir, out float t, out int iterations)
+void intersectMandelbox(inout vec3 pos, in vec3 dir, out float t)
 {
     t = 0.;
     for (int j = 0; j < RAYITERATIONS; j ++) {
 	float discardColor;
 	float distance = mandelboxDistance(pos, discardColor);
-
         pos += distance * dir;
 	t += distance;
-	float dt = DETAIL * t;
-        if (distance < dt) {
-	    iterations = j;
-	    return;
-	}
 
+        if (distance < DETAIL * t) {
+	    break;
+	}
 	if (t > 10.) {
 	    break;
 	}
     }
-
-    iterations = RAYITERATIONS;
 }
 
 vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
-    int ao;
-    intersectMandelbox(pos, dir, t, ao);
+    intersectMandelbox(pos, dir, t);
     if (t < 10.) {
 	/* Estimate material type. */
 	float curveLike;
 	float distance = mandelboxDistance(pos, curveLike);
+	curveLike -= 0.25;
+	curveLike /= 0.75;
 	curveLike = pow(curveLike, 8.);
 	float boxLike = 1. - curveLike;
 	float metallicness = boxLike * curveLike * 4.;
@@ -89,23 +86,25 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
 	float dz = mandelboxDistance(pos + vec3(0., 0., dt), discardColor);
 	vec3 norm = normalize(vec3(dx, dy, dz) - distance);
 
+	/* Estimate ambient occlusion from derivate. */
+	float ao = dx + dy + dz - 3. * distance;
+	ao = max(1. - abs(ao) / dt, 0.);
+
 	/* Calculate diffuse and specular terms. */
 	float diffuse = max(dot(LIGHT, norm), 0.);
-	float aoTerm = 1. - float(ao) / float(RAYITERATIONS);
 	vec3 reflection = reflect(LIGHT, norm);
 	float specular = max(dot(reflection, dir), 0.);
 
 	/* Calculate shadow. */	
 	float lightDistance;
-	int lightAo;
 	pos += LIGHT * dt;
-	intersectMandelbox(pos, LIGHT, lightDistance, lightAo);
+	intersectMandelbox(pos, LIGHT, lightDistance);
 	lightDistance /= 10.;
 
 	vec3 color = vec3(1. - boxLike, 1. - max(curveLike, boxLike), 1. - curveLike);
 	return
-	    (color * (.1 * aoTerm + diffuse * lightDistance)
-	     + metallicness * pow(specular, 1. + 50. * metallicness) * lightDistance) / (1. + t * t * .2);
+	    (color * (.1 * ao + diffuse * lightDistance)
+	     + pow(specular, 100. * curveLike) * lightDistance) / (1. + t * t * .2);
     }
     
     return vec3(0., 0., 0.);
