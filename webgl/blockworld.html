@@ -1,0 +1,220 @@
+<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"/><title>Block world rendering experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* System's clock, for running animations. */
+uniform float uTime;
+/* Position of camera. */
+uniform vec3 uPos;
+/* Lookat of camera. */
+uniform vec3 uDir;
+/* Noise texture */
+uniform sampler2D uNoise;
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+
+const vec3 UP = vec3(0., 0., 1.);
+const float FOG = 10.;
+const vec3 LIGHT = vec3(0.8, 0., 0.6);
+
+/* Cross product. */
+vec3 cross(in vec3 a, in vec3 b) {
+    return a.yzx * b.zxy - a.zxy * b.yzx;
+}
+
+/* 3D texture support doesn't exist, so I project back and forth. */
+vec4 noise3d(in vec3 point) {
+    /* Get texel coord in the 256x256x256 cube. */
+    int x = int(point.x);
+    int y = int(point.y);
+    int z = int(point.z);
+
+    /* Convert to linear offset. */
+    int index = x + y * 256 + z * 256 * 256;
+
+    /* Map the linear offset to 2D */
+    float index2 = (float(index) + .5) / 4096.;
+    float x2 = fract(index2);
+    float y2 = index2 / 4096.;
+
+    return texture2D(uNoise, vec2(x2, y2));
+}
+
+float intersectTerrain(inout vec3 pos, in vec3 dir) {
+    float t = 0.;
+
+    for (int i = 0; i < 32 ; i ++) {
+	float n = noise3d(pos).r;
+	if (n > 0.5) {
+	    return t;
+	}
+
+	/* Distance to next square */
+	vec3 d = step(0., dir) - fract(pos);
+	vec3 len = d / dir;
+	float step = .00005 + min(min(len.x, len.y), len.z);
+
+	pos += step * dir;
+	t += step;
+	if (t > FOG) {
+	    t = FOG;
+	    break;
+	}
+    }
+
+    return t;
+}
+
+float getAO(in vec3 pos, in vec3 normal) {
+    /* Generate orthogonal base from normal. */
+    vec3 up = normal.zxy;
+    vec3 left = normal.yzx;
+
+    /* Using the base, we now generate occlusion information. */
+    vec3 posTemp;
+    posTemp = pos;
+    float d1 = intersectTerrain(posTemp, left);
+    posTemp = pos;
+    float d2 = intersectTerrain(posTemp, -left);
+    posTemp = pos;
+    float d3 = intersectTerrain(posTemp, up);
+    posTemp = pos;
+    float d4 = intersectTerrain(posTemp, -up);
+    d1 = min(d1 * 4., 1.);
+    d2 = min(d2 * 4., 1.);
+    d3 = min(d3 * 4., 1.);
+    d4 = min(d4 * 4., 1.);
+
+    return max(d1 * d2 * d3 * d4, 0.);
+}
+
+vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
+    float n = noise3d(pos).r;
+    vec3 color = vec3(n, .5 + .5 * sin(12. * n), .5 + .5 * sin(8. * n));
+
+    vec3 d = fract(pos);
+   
+    vec3 normal;
+    vec3 dn = 1. - 2. * step(0., dir);
+    if (d.x < 0.0001 || d.x > 0.9999) {
+	normal = vec3(dn.x, 0., 0.);
+    } else if (d.y < 0.0001 || d.y > 0.9999) {
+	normal = vec3(0., dn.y, 0.);
+    } else {
+	normal = vec3(0., 0., dn.z);
+    }
+    
+    /* Evaluate AO. */
+    float ao = getAO(pos + normal * .0001, normal);
+
+    float diffuse = max(dot(normal, LIGHT), 0.);
+    float specular = max(dot(reflect(LIGHT, normal), dir), 0.);
+
+    return color * (.1 * ao + diffuse) + pow(specular, 50.);
+}
+
+
+void main(void) {
+    vec3 pos = uPos;
+    
+    /* Calculate an orthonormal basis based on lookat and up vector. */
+    vec3 left = normalize(cross(UP, uDir));
+    vec3 up = cross(uDir, left);
+    vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+    dir = normalize(dir);
+    
+    float distance = intersectTerrain(pos, dir);
+    vec3 terrainColor = getTerrainColor(pos, dir);
+    vec3 color = mix(terrainColor, vec3(.2, .2, .2), distance/FOG);
+
+    gl_FragColor = vec4(sqrt(color), 1.);
+}
+
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+
+function prng(n) {
+    var m = n;
+    for (var i = 0; i < 3; i ++) {
+	n = (n & 0xffff) + m & 0xffff;
+	m = m + n & 0xffff;
+	n += n * n;
+	n ^= n >> 15;
+    }
+
+    return n & 0xffff;
+}
+
+function makeNoiseTexture(gl) {
+    var perm = [];
+    for (var i = 0; i < 256; i ++) {
+	perm.push(prng(i + 12213));
+    }
+    var getValueNoise = function(x, y, z) {
+	var r = 0;
+	r = perm[r + x & 0xff];
+	r = perm[r + y & 0xff];
+	r = perm[r + z & 0xff];
+	return r & 0xff;
+    };
+
+    var pixels = new Uint8Array(256 * 256 * 256 * 4);
+    var offset = 0;
+    for (var z = 0; z < 256; z ++) {
+	for (var y = 0; y < 256; y ++) {
+	    for (var x = 0; x < 256; x ++) {
+		var v0 = getValueNoise(x, y, z);
+
+		pixels[offset ++] = v0;
+		pixels[offset ++] = 0;
+		pixels[offset ++] = 0;
+		pixels[offset ++] = 0;
+	    }
+	}
+    }
+
+    var texture = gl.createTexture();
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 4096, 4096, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    return texture;
+}
+
+function effectInit(gl, shader) {
+    var textureNoise = makeNoiseTexture(gl);
+
+    /* Bind the noise texture to texture unit 0. */
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, textureNoise);
+    gl.uniform1i(gl.getUniformLocation(shader, "uNoise"), 0);
+
+    effectStart(gl, shader);
+}
+</script>
+</head>
+<body>
+
+<h1>Block world rendering</h1>
+<div>
+<canvas id="canvas" width="768" height="768"></canvas>
+</div>
+
+</body>
+</html>
