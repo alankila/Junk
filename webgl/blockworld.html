@@ -15,7 +15,7 @@ uniform sampler2D uNoise;
 varying vec2 vPosition;
 
 const vec3 UP = vec3(0., 0., 1.);
-const float FOG = 10.;
+const float FOG = 8.;
 const vec3 LIGHT = vec3(0.8, 0., 0.6);
 
 /* Cross product. */
@@ -34,28 +34,27 @@ vec4 noise3d(in vec3 point) {
     int index = x + y * 256 + z * 256 * 256;
 
     /* Map the linear offset to 2D */
-    float index2 = (float(index) + .5) / 4096.;
-    float x2 = fract(index2);
-    float y2 = index2 / 4096.;
+    float x2 = float(index       ) / 4096.;
+    float y2 = float(index / 4096) / 4096.;
 
     return texture2D(uNoise, vec2(x2, y2));
 }
 
-float intersectTerrain(inout vec3 pos, in vec3 dir) {
+float intersectTerrain(in vec3 pos, in vec3 dir) {
     float t = 0.;
 
-    for (int i = 0; i < 32 ; i ++) {
-	float n = noise3d(pos).r;
+    for (int i = 0; i < 32; i ++) {
+	vec3 testPos = pos + t * dir;
+	float n = noise3d(testPos).x;
 	if (n > 0.5) {
 	    return t;
 	}
 
 	/* Distance to next square */
-	vec3 d = step(0., dir) - fract(pos);
+	vec3 d = step(0., dir) - fract(testPos);
 	vec3 len = d / dir;
 	float step = .00005 + min(min(len.x, len.y), len.z);
 
-	pos += step * dir;
 	t += step;
 	if (t > FOG) {
 	    t = FOG;
@@ -72,25 +71,20 @@ float getAO(in vec3 pos, in vec3 normal) {
     vec3 left = normal.yzx;
 
     /* Using the base, we now generate occlusion information. */
-    vec3 posTemp;
-    posTemp = pos;
-    float d1 = intersectTerrain(posTemp, left);
-    posTemp = pos;
-    float d2 = intersectTerrain(posTemp, -left);
-    posTemp = pos;
-    float d3 = intersectTerrain(posTemp, up);
-    posTemp = pos;
-    float d4 = intersectTerrain(posTemp, -up);
+    float d1 = intersectTerrain(pos, -left);
+    float d2 = intersectTerrain(pos, left);
+    float d3 = intersectTerrain(pos, -up);
+    float d4 = intersectTerrain(pos, up);
     d1 = min(d1 * 4., 1.);
     d2 = min(d2 * 4., 1.);
     d3 = min(d3 * 4., 1.);
     d4 = min(d4 * 4., 1.);
 
-    return max(d1 * d2 * d3 * d4, 0.);
+    return .5 + .5 * max(d1 * d2 * d3 * d4, 0.);
 }
 
 vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
-    float n = noise3d(pos).r;
+    float n = noise3d(pos).x;
     vec3 color = vec3(n, .5 + .5 * sin(12. * n), .5 + .5 * sin(8. * n));
 
     vec3 d = fract(pos);
@@ -106,12 +100,12 @@ vec3 getTerrainColor(in vec3 pos, in vec3 dir) {
     }
     
     /* Evaluate AO. */
-    float ao = getAO(pos + normal * .0001, normal);
+    float ao = getAO(pos + normal * .5, normal);
 
     float diffuse = max(dot(normal, LIGHT), 0.);
-    float specular = max(dot(reflect(LIGHT, normal), dir), 0.);
+    float specular = 0.;//max(dot(reflect(LIGHT, normal), dir), 0.);
 
-    return color * (.1 * ao + diffuse) + pow(specular, 50.);
+    return color * (.2 * ao + diffuse) + pow(specular, 50.);
 }
 
 
@@ -125,8 +119,11 @@ void main(void) {
     dir = normalize(dir);
     
     float distance = intersectTerrain(pos, dir);
+    pos += distance * dir;
     vec3 terrainColor = getTerrainColor(pos, dir);
-    vec3 color = mix(terrainColor, vec3(.2, .2, .2), distance/FOG);
+
+    float fog = distance /= FOG;
+    vec3 color = mix(terrainColor, vec3(.2, .2, .2), fog * fog);
 
     gl_FragColor = vec4(sqrt(color), 1.);
 }
