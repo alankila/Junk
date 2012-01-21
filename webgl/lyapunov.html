@@ -1,0 +1,73 @@
+<html><head><title>Zirconium city experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* System's clock, for running animations. */
+uniform float uTime;
+/* Position of camera. */
+uniform vec3 uPos;
+/* Lookat of camera. */
+uniform vec3 uDir;
+/* Scale factor */
+uniform float uScale;
+
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+
+vec3 lyapunovoid(in vec2 ab) {
+    float le = 0.0;
+    float x = 0.5;
+    for (int j = 0; j < 4; j ++) {
+	for (int i = 0; i < 12; i ++) {
+	    float r = i < 6 ? ab.y : ab.x;
+	    x = r * x * (1. - x);
+	    le += log(abs(r * (1. - 2. * x)));
+	}
+    }
+    return le < 4. ? vec3(.5 + .5 * sin(le * .1), .5 + .5 * cos(le * .2), .5 + .5 * sin(le * .3)) : vec3(0., 0., 0.);
+}
+
+void main(void) {
+    vec2 topleft = vec2(3.4, 2.5);
+    vec2 bottomright = vec2(4.0, 3.4);
+    vec2 ab = ((topleft + bottomright) + vPosition.yx * (0.5 + 0.4 * sin(uTime * 0.1)) * (bottomright - topleft)) * .5;
+    gl_FragColor = vec4(lyapunovoid(ab), 1.);
+}
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+function effectInit(gl, shader) {
+    /*
+    shader.uScale = gl.getUniformLocation(shader, "uScale");
+    var scale = document.getElementById("scale");
+    scale.onchange = function() {
+	gl.uniform1f(shader.uScale, parseFloat(this.value));
+    };
+    scale.onchange();
+    */
+    effectStart(gl, shader);
+}
+</script>
+</head>
+<body>
+
+<h1>Just a simple hack to test lyapunovoid rendering</h1>
+<form onsubmit="return false">
+</form>
+<canvas id="canvas" width="768" height="768"></canvas>
+
+</body>
+</html>
