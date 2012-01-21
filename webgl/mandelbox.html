@@ -18,7 +18,7 @@ varying vec2 vPosition;
 const vec3 LIGHT = vec3(0.707, 0.707, 0.);
 const vec3 UP = vec3(0.0, 0.0, 1.0);
 const int ITERATIONS = 20;
-const int RAYITERATIONS = 256;
+const int RAYITERATIONS = 128;
 const float DETAIL = 0.002;
 
 /* Cross product. */
@@ -30,11 +30,10 @@ vec3 cross(in vec3 a, in vec3 b) {
     );
 }
 
-float mandelboxDistance(in vec3 pos, out float coloringType) {
+float mandelboxDistance(in vec3 pos) {
     vec3 iter = pos;
     float scale = uScale;
 
-    coloringType = 0.;
     for (int i = 0; i < ITERATIONS; i ++) {
 	/* Box fold */
 	iter = clamp(iter, -1., 1.) * 2. - iter;
@@ -42,20 +41,35 @@ float mandelboxDistance(in vec3 pos, out float coloringType) {
 	iter *= uScale / f;
 	scale *= uScale / f;
 	iter += pos;
-	coloringType += f;
     }
-    coloringType /= float(ITERATIONS);
 
-    iter = abs(iter);
-    return max(max(iter.x, iter.y), iter.z) / scale;
+    return sqrt(dot(iter, iter)) / abs(scale);
 }
 
-void intersectMandelbox(inout vec3 pos, in vec3 dir, out float t)
+float mandelboxColor(in vec3 pos) {
+    vec3 iter = pos;
+    float scale = uScale;
+
+    float coloringType = 1.0;
+    for (int i = 0; i < ITERATIONS; i ++) {
+	/* Box fold */
+	iter = clamp(iter, -1., 1.) * 2. - iter;
+	float f = clamp(dot(iter, iter), 0.25, 1.0);
+	iter *= uScale / f;
+	scale *= uScale / f;
+	iter += pos;
+	coloringType = min(coloringType, f);
+    }
+    coloringType -= 0.25;
+    coloringType /= 0.75;
+    return coloringType;
+}
+
+float intersectMandelbox(inout vec3 pos, in vec3 dir)
 {
-    t = 0.;
+    float t = 0.;
     for (int j = 0; j < RAYITERATIONS; j ++) {
-	float discardColor;
-	float distance = mandelboxDistance(pos, discardColor);
+	float distance = mandelboxDistance(pos);
         pos += distance * dir;
 	t += distance;
 
@@ -66,47 +80,42 @@ void intersectMandelbox(inout vec3 pos, in vec3 dir, out float t)
 	    break;
 	}
     }
+    return t;
 }
 
 vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
-    intersectMandelbox(pos, dir, t);
-    if (t < 10.) {
-	/* Estimate material type. */
-	float curveLike;
-	float distance = mandelboxDistance(pos, curveLike);
-	curveLike -= 0.25;
-	curveLike /= 0.75;
-	curveLike = pow(curveLike, 8.);
-	float boxLike = 1. - curveLike;
-	float metallicness = boxLike * curveLike * 4.;
-
-	/* Calculate normal. */
-	float discardColor;
-	float dt = DETAIL * t;
-	float dx = mandelboxDistance(pos + vec3(dt, 0., 0.), discardColor);
-	float dy = mandelboxDistance(pos + vec3(0., dt, 0.), discardColor);
-	float dz = mandelboxDistance(pos + vec3(0., 0., dt), discardColor);
-	vec3 norm = normalize(vec3(dx, dy, dz) - distance);
-
-	/* Calculate diffuse and specular terms. */
-	float diffuse = max(dot(LIGHT, norm), 0.);
-	vec3 reflection = reflect(LIGHT, norm);
-	float specular = max(dot(reflection, dir), 0.);
-
-	/* Calculate shadow. */	
-	/*
-	float lightDistance;
-	pos += LIGHT * dt;
-	intersectMandelbox(pos, LIGHT, lightDistance);
-	lightDistance /= 10.;
-	*/
-	vec3 color = vec3(1. - boxLike, 1. - max(curveLike, boxLike), 1. - curveLike);
-	return
-	    (color * (.1 + diffuse)
-	     + pow(specular, 100. * curveLike)) / (1. + t * t * .2);
+    t = intersectMandelbox(pos, dir);
+    if (t > 10.) {
+	return dir * .1 + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 1.0, dot(dir, LIGHT));
     }
-    
-    return vec3(0., 0., 0.);
+
+    /* Estimate material type. */
+    float curveLike = mandelboxColor(pos);
+    float boxLike = 1. - curveLike;
+
+    /* Calculate normal. */
+    float dt = DETAIL * t;
+    float distance = mandelboxDistance(pos);
+    float dx = mandelboxDistance(pos + vec3(dt, 0., 0.));
+    float dy = mandelboxDistance(pos + vec3(0., dt, 0.));
+    float dz = mandelboxDistance(pos + vec3(0., 0., dt));
+    vec3 norm = normalize(vec3(dx, dy, dz) - distance);
+
+    float ao = 1.0;
+    for (int i = 3; i < 6; i ++) {
+	float expected = dt * pow(2.0, float(i));
+	float actual = mandelboxDistance(pos - dir * expected);
+	ao *= min(1.0, actual / expected);
+    }
+    ao = min(ao * 2.0, 1.0);
+
+    /* Calculate diffuse and specular terms. */
+    float diffuse = max(dot(LIGHT, norm), 0.);
+    vec3 reflection = reflect(LIGHT, norm);
+    float specular = max(dot(reflection, dir), 0.);
+
+    vec3 color = vec3(1. - boxLike, 1. - max(curveLike, boxLike), 1. - curveLike);
+    return (color * ao * diffuse) + .2 * pow(specular, 64.0);
 }
 
 void main(void) {
@@ -120,8 +129,7 @@ void main(void) {
 
     float distance;
     vec3 color = getMandelboxColor(pos, dir, distance);
-    vec3 space = dir * .1 + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 1.0, dot(dir, LIGHT));
-    gl_FragColor = vec4(sqrt(mix(color, space, step(9.9, distance))), 1.);
+    gl_FragColor = vec4(sqrt(color), 1.);
 }
 </script> 
 

@@ -18,20 +18,21 @@ varying vec2 vPosition;
 vec3 lyapunovoid(in vec2 ab) {
     float le = 0.0;
     float x = 0.5;
-    for (int j = 0; j < 4; j ++) {
+    for (int j = 0; j < 6; j ++) {
 	for (int i = 0; i < 12; i ++) {
 	    float r = i < 6 ? ab.y : ab.x;
+	    le += log(1e-9 + abs(r * (1. - 2. * x)));
 	    x = r * x * (1. - x);
-	    le += log(abs(r * (1. - 2. * x)));
 	}
     }
-    return le < 4. ? vec3(.5 + .5 * sin(le * .1), .5 + .5 * cos(le * .2), .5 + .5 * sin(le * .3)) : vec3(0., 0., 0.);
+    le /= 5. * 12.;
+    return smoothstep(-0.15, -0.35, le) * vec3(.5 + .5 * sin(le * 4.), .5 + .5 * cos(le * 4.), .5 + .5 * sin(le * .5));
 }
 
 void main(void) {
     vec2 topleft = vec2(3.4, 2.5);
     vec2 bottomright = vec2(4.0, 3.4);
-    vec2 ab = ((topleft + bottomright) + vPosition.yx * (0.5 + 0.4 * sin(uTime * 0.1)) * (bottomright - topleft)) * .5;
+    vec2 ab = ((topleft + bottomright) + vPosition.yx * (0.6 + 0.4 * cos(uTime * 0.1)) * (bottomright - topleft)) * .5;
     gl_FragColor = vec4(lyapunovoid(ab), 1.);
 }
 </script> 
