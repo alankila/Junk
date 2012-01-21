@@ -31,21 +31,23 @@ vec3 cross(in vec3 a, in vec3 b) {
 }
 
 float mandelboxDistance(in vec3 pos, out float coloringType) {
-    vec4 iter = vec4(pos, uScale);
+    vec3 iter = pos;
+    float scale = uScale;
 
     coloringType = 0.;
     for (int i = 0; i < ITERATIONS; i ++) {
 	/* Box fold */
-	iter.xyz = clamp(iter.xyz, -1., 1.) * 2. - iter.xyz;
-	float f = clamp(dot(iter.xyz, iter.xyz), 0.25, 1.0);
+	iter = clamp(iter, -1., 1.) * 2. - iter;
+	float f = clamp(dot(iter, iter), 0.25, 1.0);
 	iter *= uScale / f;
-	iter.xyz += pos;
+	scale *= uScale / f;
+	iter += pos;
 	coloringType += f;
     }
     coloringType /= float(ITERATIONS);
 
     iter = abs(iter);
-    return max(max(iter.x, iter.y), iter.z) / iter.w;
+    return max(max(iter.x, iter.y), iter.z) / scale;
 }
 
 void intersectMandelbox(inout vec3 pos, in vec3 dir, out float t)
@@ -86,25 +88,22 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
 	float dz = mandelboxDistance(pos + vec3(0., 0., dt), discardColor);
 	vec3 norm = normalize(vec3(dx, dy, dz) - distance);
 
-	/* Estimate ambient occlusion from derivate. */
-	float ao = dx + dy + dz - 3. * distance;
-	ao = max(1. - abs(ao) / dt, 0.);
-
 	/* Calculate diffuse and specular terms. */
 	float diffuse = max(dot(LIGHT, norm), 0.);
 	vec3 reflection = reflect(LIGHT, norm);
 	float specular = max(dot(reflection, dir), 0.);
 
 	/* Calculate shadow. */	
+	/*
 	float lightDistance;
 	pos += LIGHT * dt;
 	intersectMandelbox(pos, LIGHT, lightDistance);
 	lightDistance /= 10.;
-
+	*/
 	vec3 color = vec3(1. - boxLike, 1. - max(curveLike, boxLike), 1. - curveLike);
 	return
-	    (color * (.1 * ao + diffuse * lightDistance)
-	     + pow(specular, 100. * curveLike) * lightDistance) / (1. + t * t * .2);
+	    (color * (.1 + diffuse)
+	     + pow(specular, 100. * curveLike)) / (1. + t * t * .2);
     }
     
     return vec3(0., 0., 0.);
@@ -156,7 +155,7 @@ function effectInit(gl, shader) {
 <form onsubmit="return false">
 Scale: <input type="text" id="scale" value="2.0" size="4" />
 </form>
-<canvas id="canvas" width="768" height="768"></canvas>
+<canvas id="canvas" width="512" height="512"></canvas>
 
 </body>
 </html>
