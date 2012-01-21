@@ -18,7 +18,7 @@ varying vec2 vPosition;
 const vec3 LIGHT = vec3(0.707, 0.707, 0.);
 const vec3 UP = vec3(0.0, 0.0, 1.0);
 const int ITERATIONS = 20;
-const int RAYITERATIONS = 128;
+const int RAYITERATIONS = 256;
 const float DETAIL = 0.002;
 
 /* Cross product. */
@@ -105,9 +105,8 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
     for (int i = 3; i < 6; i ++) {
 	float expected = dt * pow(2.0, float(i));
 	float actual = mandelboxDistance(pos - dir * expected);
-	ao *= min(1.0, actual / expected);
+	ao *= min(1.0, 2.0 * actual / expected);
     }
-    ao = min(ao * 2.0, 1.0);
 
     /* Calculate diffuse and specular terms. */
     float diffuse = max(dot(LIGHT, norm), 0.);
