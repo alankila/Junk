@@ -124,7 +124,7 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     vec3 iter;
     float curveLike = mandelboxColor(pos, iter);
     vec3 color = vec3(.5, .5, .5) + iter / length(iter) * .5;
-    color = mix(color, 1. - color * .5, curveLike);
+    color = mix(color, 1. - color, curveLike);
 
     return color * ao / (1. + t * t * .01);
 }
