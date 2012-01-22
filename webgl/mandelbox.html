@@ -84,10 +84,11 @@ float intersectMandelbox(in vec3 pos, in vec3 dir)
     return t;
 }
 
-vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
-    t = intersectMandelbox(pos, dir);
+vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
+    float t = intersectMandelbox(pos, dir);
     if (t > 10.) {
-	return dir * .01;// + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 0.999, dot(dir, LIGHT));
+	return dir * .01;
+	// + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 0.999, dot(dir, LIGHT));
     }
     pos += t * dir;
     float dt = t * DETAIL;
@@ -103,6 +104,8 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
     vec3 norm = normalize(vec3(dx2 - dx1, dy2 - dy1, dz2 - dz1));
     */
 
+    /* because ao is estimated along the view ray,
+     * we approximate diffuse lighting at the same time */
     float ao = 1.0;
     for (int i = 3; i < 7; i ++) {
 	float expected = dt * pow(2.0, float(i));
@@ -123,7 +126,7 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
     vec3 color = vec3(.5, .5, .5) + iter / length(iter) * .5;
     color = mix(color, 1. - color * .5, curveLike);
 
-    return color * ao / (1. + t * t * .02);
+    return color * ao / (1. + t * t * .01);
 }
 
 void main(void) {
@@ -134,8 +137,7 @@ void main(void) {
     vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
     dir = normalize(dir);
 
-    float distance;
-    vec3 color = getMandelboxColor(uPos, dir, distance);
+    vec3 color = getMandelboxColor(uPos, dir);
     gl_FragColor = vec4(sqrt(color), 1.);
 }
 </script> 
