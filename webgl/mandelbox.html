@@ -123,10 +123,10 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     /* Estimate material type. */
     vec3 iter;
     float curveLike = mandelboxColor(pos, iter);
-    vec3 color = vec3(.5, .5, .5) + iter / length(iter) * .5;
+    vec3 color = abs(iter) / length(iter);
     color = mix(color, 1. - color, curveLike);
 
-    return color * ao / (1. + t * t * .01);
+    return color * ao / (1. + t * t * .1);
 }
 
 void main(void) {
