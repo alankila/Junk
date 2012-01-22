@@ -1,3 +1,5 @@
+var pos = [0, 0, 0];
+
 function initShaders(gl) {
     var fragmentShader = getShader(gl, "shader-fs");
     if (! fragmentShader) {
@@ -80,6 +82,10 @@ onload = function() {
     effectInit(gl, shader);
 }
 
+var effectPos = function(x, y, z) {
+    pos = [x, y, z];
+}
+
 var effectStart = function(gl, shader) {
     /* Initialize the quad required for world rendering */
     var quadVertex = gl.createBuffer();
@@ -110,10 +116,6 @@ var effectStart = function(gl, shader) {
         forward = false;
     };
 
-    var x = 0;
-    var y = 0;
-    var z = 0;
-
     var lastTime = 0;
     var startTime = Date.now();
     var fpsNumber = 0;
@@ -123,21 +125,20 @@ var effectStart = function(gl, shader) {
         var timeStep = lastTime - oldLastTime;
 
         gl.uniform1f(shader.uTime, lastTime);
-        gl.uniform3f(shader.uPos, x, y, z);
         var dz = Math.cos(mouseY * Math.PI);
         var dz2 = Math.sin(mouseY * Math.PI);
         var dx = Math.sin(mouseX * Math.PI * 2) * dz2;
         var dy = Math.cos(mouseX * Math.PI * 2) * dz2;
         if (forward) {
-            x += dx * timeStep * speed;
-            y += dy * timeStep * speed;
-            z += dz * timeStep * speed;
+            pos[0] += dx * timeStep * speed;
+            pos[1] += dy * timeStep * speed;
+            pos[2] += dz * timeStep * speed;
 	    speed += timeStep;
 	    if (speed > 1.0) {
 		speed = 1.0;
 	    }
 	}
-        gl.uniform3f(shader.uPos, x, y, z);
+        gl.uniform3f(shader.uPos, pos[0], pos[1], pos[2]);
         gl.uniform3f(shader.uDir, dx, dy, dz);
         onload.fps.removeChild(onload.fps.firstChild);
         onload.fps.appendChild(document.createTextNode(Math.round(fpsNumber / lastTime) + " fps"));

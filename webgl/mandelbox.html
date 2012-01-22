@@ -122,12 +122,11 @@ void main(void) {
     vec3 left = normalize(cross(UP, uDir));
     vec3 up = cross(uDir, left);
 
-    vec3 pos = vec3(0., 8., 0.) + uPos;
     vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
     dir = normalize(dir);
 
     float distance;
-    vec3 color = getMandelboxColor(pos, dir, distance);
+    vec3 color = getMandelboxColor(uPos, dir, distance);
     gl_FragColor = vec4(sqrt(color), 1.);
 }
 </script> 
@@ -146,6 +145,8 @@ void main(void) {
 <script type="text/javascript" src="webgl.js"></script>
 <script type="text/javascript">
 function effectInit(gl, shader) {
+    effectPos(0., 8., 0.);
+
     shader.uScale = gl.getUniformLocation(shader, "uScale");
     var scale = document.getElementById("scale");
     scale.onchange = function() {
