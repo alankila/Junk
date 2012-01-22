@@ -18,19 +18,20 @@ const vec3 UP = vec3(0., 0., 1.);
 
 const vec3 LIGHT = vec3(0.707, 0., 0.707);
 
-const int ITERATIONS = 16;
+const int ITERATIONS = 12;
 
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
     return a.yzx * b.zxy - a.zxy * b.yzx;
 }
 
-float testPoint(vec3 c, inout float orbit) {
+float testPoint(vec3 c, out float orbit) {
     vec3 z = c;
 
     // Iterate to compute the distance estimator.
-    int iterations = ITERATIONS;
+    int lastIteration = ITERATIONS;
     float zl;
+    orbit = 1.;
     for (int i = 0; i < ITERATIONS; i ++) {
 	vec3 z2 = z * z;
 	vec3 z4 = z2 * z2;
@@ -54,49 +55,44 @@ float testPoint(vec3 c, inout float orbit) {
 	}
 
 	if (zl > 4.) {
-	    iterations = i;
+	    lastIteration = i;
 	    break;
 	}
     }
-   
-    // Return the distance estimation value which determines the next raytracing
-    // step size, or if whether we are within the threshold of the surface.
-    return .5 * log(zl) / pow(8., float(iterations));
+ 
+    return 0.5 * log(zl) * pow(1./8., float(lastIteration));
 }
 
-vec3 intersectMandelbulb(inout vec3 pos, in vec3 dir) {
-    float t = 0.1;
+vec3 intersectMandelbulb(in vec3 pos, in vec3 dir) {
+    float t = 0.01;
     float s = 0.001;
     for (int j = 0; j < RAYITERATIONS; j ++) {
 	/* Outside the fractal region? */
-	if (dot(pos, pos) > 4.0) {
+	vec3 ipos = pos + dir * t;
+	if (dot(ipos, ipos) > 4.0) {
 	    break;
 	}
 
-	float ao = 1., aoignore;
-	float p  = testPoint(pos, ao);
-	float ds = s*t*.5;
-	float px = testPoint(pos + vec3(ds, 0., 0.), aoignore);
-	float py = testPoint(pos + vec3(0., ds, 0.), aoignore);
-	float pz = testPoint(pos + vec3(0., 0., ds), aoignore);
-	vec3 d = (vec3(px, py, pz) - p) / ds;
-
-	float distance = .5 * p / length(d);
-        pos += distance * dir;
+	float ao;
+	float p = testPoint(ipos, ao);
+	float aoIgnore;
+	float px = testPoint(ipos + vec3(s * t, 0., 0.), aoIgnore);
+	float py = testPoint(ipos + vec3(0., s * t, 0.), aoIgnore);
+	float pz = testPoint(ipos + vec3(0., 0., s * t), aoIgnore);
+	vec3 g = (vec3(px, py, pz) - p) / (s * t);
+	float distance = .5 * abs(p) / length(g);
 	t += distance;
 
 	if (distance < s * t) {
-	    d = normalize(d);
-	    float diffuse = max(dot(d, LIGHT), 0.);
-	    float specular = max(dot(reflect(LIGHT, d), dir), 0.);
-	    float color = clamp(p / distance * .2, 0., 1.);
-	    vec3 objColor = vec3(color, 2. * color * (1.-color), 1.-color);
-	    return (objColor * diffuse * ao
-		    + diffuse * pow(specular, 20.)) / (1. + t * t);
+	    g = normalize(g);
+	    float diffuse = max(0.3, dot(LIGHT, g));
+	    float specular = max(0., dot(reflect(LIGHT, g), dir));
+	    vec3 color = abs(ipos) / length(ipos);
+	    return ((color * diffuse * ao) + .3 * pow(specular, 32.)) / (1. + t * t);
 	}
     }
 
-    return vec3(0., 0., 0.);
+    return dir * .1 + smoothstep(0.998, 0.999, dot(dir, LIGHT));;
 }
 
 void main(void) {
@@ -104,11 +100,10 @@ void main(void) {
     vec3 left = normalize(cross(UP, uDir));
     vec3 up = cross(uDir, left);
 
-    vec3 pos = vec3(0.1, 1.2, 0.) + uPos;
     vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
     dir = normalize(dir);
 
-    vec3 color = intersectMandelbulb(pos, dir);
+    vec3 color = intersectMandelbulb(uPos, dir);
     gl_FragColor = vec4(sqrt(color), 1.);
 }
 </script> 
@@ -127,6 +122,7 @@ void main(void) {
 <script type="text/javascript" src="webgl.js"></script>
 <script type="text/javascript">
 function effectInit(gl, shader) {
+    effectPos(0.1, 1.2, 0.);
     effectStart(gl, shader);
 }
 </script>
