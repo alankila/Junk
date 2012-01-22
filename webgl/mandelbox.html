@@ -46,8 +46,8 @@ float mandelboxDistance(in vec3 pos) {
     return sqrt(dot(iter, iter)) / abs(scale);
 }
 
-float mandelboxColor(in vec3 pos) {
-    vec3 iter = pos;
+float mandelboxColor(in vec3 pos, out vec3 iter) {
+    iter = pos;
     float scale = uScale;
 
     float coloringType = 1.0;
@@ -65,17 +65,18 @@ float mandelboxColor(in vec3 pos) {
     return coloringType;
 }
 
-float intersectMandelbox(inout vec3 pos, in vec3 dir)
+float intersectMandelbox(in vec3 pos, in vec3 dir)
 {
     float t = 0.;
     for (int j = 0; j < RAYITERATIONS; j ++) {
-	float distance = mandelboxDistance(pos);
-        pos += distance * dir;
-	t += distance;
+	float dt = mandelboxDistance(pos + t * dir);
+	t += dt;
 
-        if (distance < DETAIL * t) {
+	/* World scale small enough? */
+        if (dt < DETAIL * t) {
 	    break;
 	}
+	/* Out of known bounding volume */
 	if (t > 10.) {
 	    break;
 	}
@@ -86,35 +87,43 @@ float intersectMandelbox(inout vec3 pos, in vec3 dir)
 vec3 getMandelboxColor(in vec3 pos, in vec3 dir, out float t) {
     t = intersectMandelbox(pos, dir);
     if (t > 10.) {
-	return dir * .1 + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 1.0, dot(dir, LIGHT));
+	return dir * .01;// + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 0.999, dot(dir, LIGHT));
     }
+    pos += t * dir;
+    float dt = t * DETAIL;
 
-    /* Estimate material type. */
-    float curveLike = mandelboxColor(pos);
-    float boxLike = 1. - curveLike;
-
-    /* Calculate normal. */
-    float dt = DETAIL * t;
-    float distance = mandelboxDistance(pos);
-    float dx = mandelboxDistance(pos + vec3(dt, 0., 0.));
-    float dy = mandelboxDistance(pos + vec3(0., dt, 0.));
-    float dz = mandelboxDistance(pos + vec3(0., 0., dt));
-    vec3 norm = normalize(vec3(dx, dy, dz) - distance);
+    /* Gradient around the set */
+    /*
+    float dx1 = mandelboxDistance(pos + vec3(-dt, 0., 0.));
+    float dy1 = mandelboxDistance(pos + vec3(0., -dt, 0.));
+    float dz1 = mandelboxDistance(pos + vec3(0., 0., -dt));
+    float dx2 = mandelboxDistance(pos + vec3(dt, 0., 0.));
+    float dy2 = mandelboxDistance(pos + vec3(0., dt, 0.));
+    float dz2 = mandelboxDistance(pos + vec3(0., 0., dt));
+    vec3 norm = normalize(vec3(dx2 - dx1, dy2 - dy1, dz2 - dz1));
+    */
 
     float ao = 1.0;
-    for (int i = 3; i < 6; i ++) {
+    for (int i = 3; i < 7; i ++) {
 	float expected = dt * pow(2.0, float(i));
 	float actual = mandelboxDistance(pos - dir * expected);
-	ao *= min(1.0, 2.0 * actual / expected);
+	ao *= min(1.0, 2. * actual / expected);
     }
 
     /* Calculate diffuse and specular terms. */
+    /*
     float diffuse = max(dot(LIGHT, norm), 0.);
     vec3 reflection = reflect(LIGHT, norm);
     float specular = max(dot(reflection, dir), 0.);
+    */
 
-    vec3 color = vec3(1. - boxLike, 1. - max(curveLike, boxLike), 1. - curveLike);
-    return (color * ao * diffuse) + .2 * pow(specular, 64.0);
+    /* Estimate material type. */
+    vec3 iter;
+    float curveLike = mandelboxColor(pos, iter);
+    vec3 color = vec3(.5, .5, .5) + iter / length(iter) * .5;
+    color = mix(color, 1. - color * .5, curveLike);
+
+    return color * ao / (1. + t * t * .02);
 }
 
 void main(void) {
