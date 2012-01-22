@@ -18,6 +18,7 @@ varying vec2 vPosition;
 const vec3 LIGHT = vec3(0.707, 0.707, 0.);
 const vec3 UP = vec3(0.0, 0.0, 1.0);
 const int ITERATIONS = 20;
+const int AOITERATIONS = 12;
 const int RAYITERATIONS = 256;
 const float DETAIL = 0.002;
 
@@ -87,14 +88,12 @@ float intersectMandelbox(in vec3 pos, in vec3 dir)
 vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     float t = intersectMandelbox(pos, dir);
     if (t > 10.) {
-	return dir * .01;
-	// + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 0.999, dot(dir, LIGHT));
+	return dir * .01 + vec3(1.0, 1.0, 1.0) * smoothstep(0.998, 0.999, dot(dir, LIGHT));
     }
     pos += t * dir;
     float dt = t * DETAIL;
 
-    /* Gradient around the set */
-    /*
+    /* Gradient of the hit point */
     float dx1 = mandelboxDistance(pos + vec3(-dt, 0., 0.));
     float dy1 = mandelboxDistance(pos + vec3(0., -dt, 0.));
     float dz1 = mandelboxDistance(pos + vec3(0., 0., -dt));
@@ -102,23 +101,22 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     float dy2 = mandelboxDistance(pos + vec3(0., dt, 0.));
     float dz2 = mandelboxDistance(pos + vec3(0., 0., dt));
     vec3 norm = normalize(vec3(dx2 - dx1, dy2 - dy1, dz2 - dz1));
-    */
 
-    /* because ao is estimated along the view ray,
-     * we approximate diffuse lighting at the same time */
-    float ao = 1.0;
-    for (int i = 3; i < 7; i ++) {
-	float expected = dt * pow(2.0, float(i));
-	float actual = mandelboxDistance(pos - dir * expected);
-	ao *= min(1.0, 2. * actual / expected);
+    /* World-space ambient occlusion. */
+    float ao = 0.0;
+    vec3 disp = vec3(dt * 8., 0, 0);
+    for (int i = 0; i < AOITERATIONS; i ++) {
+	float actual = mandelboxDistance(pos + disp);
+	float expected = length(disp);
+	ao += min(1., actual / expected);
+	disp = vec3(-2. * disp.y, disp.z, disp.x);
     }
+    ao = clamp(ao / float(AOITERATIONS / 2), 0., 1.);
 
     /* Calculate diffuse and specular terms. */
-    /*
-    float diffuse = max(dot(LIGHT, norm), 0.);
+    float diffuse = max(dot(LIGHT, norm), 0.2);
     vec3 reflection = reflect(LIGHT, norm);
     float specular = max(dot(reflection, dir), 0.);
-    */
 
     /* Estimate material type. */
     vec3 iter;
@@ -126,7 +124,7 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     vec3 color = abs(iter) / length(iter);
     color = mix(color, 1. - color, curveLike);
 
-    return color * ao / (1. + t * t * .1);
+    return (color * (diffuse * ao) + .25 * pow(specular, 64.)) / (1. + t * t * .1);
 }
 
 void main(void) {
