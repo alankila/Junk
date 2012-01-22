@@ -13,12 +13,13 @@ uniform vec3 uDir;
 varying vec2 vPosition;
 
 const int RAYITERATIONS = 256;
+const float DETAIL = 0.001;
 
 const vec3 UP = vec3(0., 0., 1.);
 
 const vec3 LIGHT = vec3(0.707, 0., 0.707);
 
-const int ITERATIONS = 12;
+const int ITERATIONS = 6;
 
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
@@ -38,15 +39,14 @@ float testPoint(vec3 c, out float orbit) {
 
 	float k3 = z2.x + z2.z;
 	float k5 = z2.x * z2.z;
-	float k1 = z4.x + z4.y + z4.z - 6.0 * z2.y * k3 + 2.0*k5;
-	float k4 = k3 - z2.y;
-	float k2 = z.y * k4 * k1 * pow(k3, -3.5);
+	float k1 = z4.x + z4.y + z4.z - 6.0*z2.y*k3 + 2.0*k5;
+	float k4 = z.y * (z2.x - z2.y + z2.z);
+	float k2 = -8. * k1 * pow(k3, -3.5) * k4;
 
 	z = c + vec3(
-	    64.0*k2*z.x*z.z*(z2.x-z2.z)*(z4.x-6.0*k5+z4.z),
-	    -16.0*z2.y*k3*k4*k4 + k1*k1,
-	    -8.0*k2*(z4.x * (z4.x - 28.0*k5) + 
-		z4.z * (70.0*z4.x - 28.0*k5 + z4.z))
+	    -8.0*z.x*z.z*(z2.x-z2.z)*(z4.x-6.0*k5+z4.z)*k2,
+	    -16.0*k3*k4*k4 + k1*k1,
+	    (z4.x*z4.x - 28.0*k5*(z4.x+z4.z) + 70.0*z4.x*z4.z + z4.z*z4.z)*k2
 	);
 
 	zl = dot(z, z);
@@ -64,8 +64,7 @@ float testPoint(vec3 c, out float orbit) {
 }
 
 vec3 intersectMandelbulb(in vec3 pos, in vec3 dir) {
-    float t = 0.01;
-    float s = 0.001;
+    float t = DETAIL;
     for (int j = 0; j < RAYITERATIONS; j ++) {
 	/* Outside the fractal region? */
 	vec3 ipos = pos + dir * t;
@@ -76,23 +75,44 @@ vec3 intersectMandelbulb(in vec3 pos, in vec3 dir) {
 	float ao;
 	float p = testPoint(ipos, ao);
 	float aoIgnore;
-	float px = testPoint(ipos + vec3(s * t, 0., 0.), aoIgnore);
-	float py = testPoint(ipos + vec3(0., s * t, 0.), aoIgnore);
-	float pz = testPoint(ipos + vec3(0., 0., s * t), aoIgnore);
-	vec3 g = (vec3(px, py, pz) - p) / (s * t);
-	float distance = .5 * abs(p) / length(g);
+	float px = testPoint(ipos + vec3(DETAIL * t, 0., 0.), aoIgnore);
+	float py = testPoint(ipos + vec3(0., DETAIL * t, 0.), aoIgnore);
+	float pz = testPoint(ipos + vec3(0., 0., DETAIL * t), aoIgnore);
+	vec3 g = (vec3(px, py, pz) - p) / (DETAIL * t);
+	float distance = .5 * p / length(g);
 	t += distance;
 
-	if (distance < s * t) {
+	if (distance < DETAIL * t) {
 	    g = normalize(g);
 	    float diffuse = max(0.3, dot(LIGHT, g));
-	    float specular = max(0., dot(reflect(LIGHT, g), dir));
 	    vec3 color = abs(ipos) / length(ipos);
-	    return ((color * diffuse * ao) + .3 * pow(specular, 32.)) / (1. + t * t);
+	    return (color * diffuse * ao) / (1. + t * t);
 	}
     }
 
     return dir * .1 + smoothstep(0.998, 0.999, dot(dir, LIGHT));;
+}
+
+vec3 intersectSphere(vec3 pos, vec3 dir, vec3 center, float radius) {
+    vec3 toSphereCenter = center - pos;
+    vec3 sphereCenterOnRay = pos + dir * dot(toSphereCenter, dir);
+    vec3 toCenterFromProjection = center - sphereCenterOnRay;
+    float squaredDistance = dot(toCenterFromProjection, toCenterFromProjection);
+
+    /* No intersection. */
+    if (squaredDistance > radius * radius) {
+	return pos;
+    }
+
+    float distanceInsideSphere = sqrt(radius * radius - squaredDistance);
+    vec3 intersectPoint = sphereCenterOnRay - distanceInsideSphere * dir;
+
+    /* Are we already inside sphere? */
+    if (dot(intersectPoint - pos, dir) < 0.) {
+	return pos;
+    }
+
+    return intersectPoint;
 }
 
 void main(void) {
@@ -103,7 +123,8 @@ void main(void) {
     vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
     dir = normalize(dir);
 
-    vec3 color = intersectMandelbulb(uPos, dir);
+    vec3 pos = intersectSphere(uPos, dir, vec3(0., 0., 0.), 2.);
+    vec3 color = intersectMandelbulb(pos, dir);
     gl_FragColor = vec4(sqrt(color), 1.);
 }
 </script> 
