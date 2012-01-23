@@ -111,7 +111,7 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
 	ao += min(1., actual / expected);
 	disp = vec3(-disp.y, disp.z, disp.x);
     }
-    ao = clamp(ao / float(AOITERATIONS / 2), 0., 1.);
+    ao = clamp(ao / float(AOITERATIONS / 4), 0., 1.);
 
     /* Calculate diffuse and specular terms. */
     float diffuse = max(dot(LIGHT, norm), 0.2);
