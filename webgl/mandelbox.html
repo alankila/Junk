@@ -48,7 +48,6 @@ float mandelboxDistance(in vec3 pos) {
 
 float mandelboxColor(in vec3 pos, out vec3 iter) {
     iter = pos;
-    float scale = uScale;
 
     float coloringType = 1.0;
     for (int i = 0; i < ITERATIONS; i ++) {
@@ -56,7 +55,6 @@ float mandelboxColor(in vec3 pos, out vec3 iter) {
 	iter = clamp(iter, -1., 1.) * 2. - iter;
 	float f = clamp(dot(iter, iter), 0.25, 1.0);
 	iter *= uScale / f;
-	scale *= uScale / f;
 	iter += pos;
 	coloringType = min(coloringType, f);
     }
