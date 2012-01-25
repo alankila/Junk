@@ -105,23 +105,28 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
 
     /* World-space ambient occlusion from the 8 corners of the cube. */
     float ao = 0.0;
-    vec3 disp = vec3(dt, dt, dt) * 16.;
+    vec3 disp = vec3(dt, dt, dt) * 8.;
     float expected = length(disp);
     for (int i = 0; i < AOITERATIONS; i ++) {
 	float actual = mandelboxDistance(pos + disp);
+	/* Typically the distance is underestimated.
+	 * The 2. is a fudge factor for how much. */
 	ao += min(1., 2. * actual / expected);
 	/* flip x on every coord */
 	disp.x = -disp.x;
 	/* flip y on every 2nd */
-	if (i == 2 || i == 4 || i == 6) {
+	if (i == 1 || i == 3 || i == 5) {
 	    disp.y = -disp.y;
 	}
 	/* flip z = every 4th */
-	if (i == 4) {
+	if (i == 3) {
 	    disp.z = - disp.z;
 	}
     }
-    ao = clamp(ao / float(AOITERATIONS / 2), 0., 1.);
+    /* How large an angle do we need before we start to see AO?
+     * I think something around /4 is alright (corresponds to 90 degrees).
+     * The fudge factor above is probably not sufficient so this compensates. */
+    ao = clamp(ao / float(AOITERATIONS / 4), 0., 1.);
 
     /* Calculate diffuse and specular terms. */
     float diffuse = max(dot(LIGHT, norm), 0.2);
