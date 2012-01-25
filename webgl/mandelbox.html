@@ -18,7 +18,7 @@ varying vec2 vPosition;
 const vec3 LIGHT = vec3(0.707, 0.707, 0.);
 const vec3 UP = vec3(0.0, 0.0, 1.0);
 const int ITERATIONS = 20;
-const int AOITERATIONS = 6;
+const int AOITERATIONS = 8;
 const int RAYITERATIONS = 256;
 const float DETAIL = 0.002;
 
@@ -44,7 +44,8 @@ float mandelboxDistance(in vec3 pos) {
 	iter += pos;
     }
 
-    return sqrt(dot(iter, iter)) / abs(scale);
+    iter = abs(iter);
+    return max(iter.x, max(iter.y, iter.z)) / abs(scale);
 }
 
 float mandelboxColor(in vec3 pos, out vec3 iter) {
@@ -102,16 +103,25 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     float dz2 = mandelboxDistance(pos + vec3(0., 0., dt));
     vec3 norm = normalize(vec3(dx2 - dx1, dy2 - dy1, dz2 - dz1));
 
-    /* World-space ambient occlusion. */
+    /* World-space ambient occlusion from the 8 corners of the cube. */
     float ao = 0.0;
-    vec3 disp = vec3(dt * 24., 0, 0);
+    vec3 disp = vec3(dt, dt, dt) * 16.;
+    float expected = length(disp);
     for (int i = 0; i < AOITERATIONS; i ++) {
 	float actual = mandelboxDistance(pos + disp);
-	float expected = length(disp);
-	ao += min(1., actual / expected);
-	disp = vec3(-disp.y, disp.z, disp.x);
+	ao += min(1., 2. * actual / expected);
+	/* flip x on every coord */
+	disp.x = -disp.x;
+	/* flip y on every 2nd */
+	if (i == 2 || i == 4 || i == 6) {
+	    disp.y = -disp.y;
+	}
+	/* flip z = every 4th */
+	if (i == 4) {
+	    disp.z = - disp.z;
+	}
     }
-    ao = clamp(ao / float(AOITERATIONS / 4), 0., 1.);
+    ao = clamp(ao / float(AOITERATIONS / 2), 0., 1.);
 
     /* Calculate diffuse and specular terms. */
     float diffuse = max(dot(LIGHT, norm), 0.2);
@@ -125,8 +135,8 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     color = mix(color, vec3(1., 1., 1.), curveLike);
 
     //color = vec3(1., 1., 1.);
-    //ao = 1.0;
     //diffuse = 1.;
+    //ao = 1.0;
     //specular = 0.;
     //t = 0.;
 
