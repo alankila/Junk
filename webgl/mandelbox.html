@@ -18,7 +18,6 @@ varying vec2 vPosition;
 const vec3 LIGHT = vec3(0.707, 0.707, 0.);
 const vec3 UP = vec3(0.0, 0.0, 1.0);
 const int ITERATIONS = 20;
-const int AOITERATIONS = 8;
 const int RAYITERATIONS = 256;
 const float DETAIL = 0.002;
 
@@ -33,7 +32,7 @@ vec3 cross(in vec3 a, in vec3 b) {
 
 float mandelboxDistance(in vec3 pos) {
     vec3 iter = pos;
-    float scale = uScale;
+    float scale = abs(uScale);
 
     for (int i = 0; i < ITERATIONS; i ++) {
 	/* Box fold */
@@ -44,8 +43,7 @@ float mandelboxDistance(in vec3 pos) {
 	iter += pos;
     }
 
-    iter = abs(iter);
-    return max(iter.x, max(iter.y, iter.z)) / abs(scale);
+    return length(iter) / scale;
 }
 
 float mandelboxColor(in vec3 pos, out vec3 iter) {
@@ -78,7 +76,6 @@ float intersectMandelbox(in vec3 pos, in vec3 dir)
         if (dt < DETAIL * t) {
 	    break;
 	}
-	/* Out of known bounding volume */
 	if (t > 10.) {
 	    break;
 	}
@@ -107,11 +104,11 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     float ao = 0.0;
     vec3 disp = vec3(dt, dt, dt) * 8.;
     float expected = length(disp);
-    for (int i = 0; i < AOITERATIONS; i ++) {
+    for (int i = 0; i < 8; i ++) {
 	float actual = mandelboxDistance(pos + disp);
 	/* Typically the distance is underestimated.
 	 * The 2. is a fudge factor for how much. */
-	ao += min(1., 2. * actual / expected);
+	ao += min(1., 3. * actual / expected);
 	/* flip x on every coord */
 	disp.x = -disp.x;
 	/* flip y on every 2nd */
@@ -124,9 +121,9 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
 	}
     }
     /* How large an angle do we need before we start to see AO?
-     * I think something around /4 is alright (corresponds to 90 degrees).
-     * The fudge factor above is probably not sufficient so this compensates. */
-    ao = clamp(ao / float(AOITERATIONS / 4), 0., 1.);
+     * We have 8 samples, and about quarter of them is probably OK to enable
+     * full lighting (no AO effect). */
+    ao = clamp(ao / 2., 0., 1.);
 
     /* Calculate diffuse and specular terms. */
     float diffuse = max(dot(LIGHT, norm), 0.2);
@@ -145,7 +142,7 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     //specular = 0.;
     //t = 0.;
 
-    return (color * (diffuse * ao) + .25 * pow(specular, 64.)) / (1. + t * t * .1);
+    return (color * diffuse + .25 * pow(specular, 64.)) * ao * exp(-t);
 }
 
 void main(void) {
