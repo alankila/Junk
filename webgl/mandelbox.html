@@ -143,6 +143,12 @@ vec3 getMandelboxColor(in vec3 pos, in vec3 dir) {
     return (color * diffuse + .25 * pow(specular, 64.)) * ao * exp(-t);
 }
 
+vec3 srgb(vec3 color) {
+    vec3 linear = color * 12.92;
+    vec3 power = 1.055 * pow(color, vec3(1./2.4, 1./2.4, 1./2.4)) - 0.055;
+    return mix(linear, power, step(0.0031308, color));
+}
+
 void main(void) {
     /* Calculate an orthonormal base for rendering. */
     vec3 left = normalize(cross(UP, uDir));
@@ -152,7 +158,7 @@ void main(void) {
     dir = normalize(dir);
 
     vec3 color = getMandelboxColor(uPos, dir);
-    gl_FragColor = vec4(sqrt(color), 1.);
+    gl_FragColor = vec4(srgb(color), 1.);
 }
 </script> 
 
