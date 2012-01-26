@@ -19,7 +19,7 @@ const vec3 UP = vec3(0., 0., 1.);
 
 const vec3 LIGHT = vec3(0.707, 0., 0.707);
 
-const int ITERATIONS = 6;
+const int ITERATIONS = 7;
 
 /* Cross product. */
 vec3 cross(in vec3 a, in vec3 b) {
@@ -30,7 +30,7 @@ float testPoint(vec3 c, out float orbit) {
     vec3 z = c;
 
     // Iterate to compute the distance estimator.
-    int lastIteration = ITERATIONS;
+    int lastIteration = ITERATIONS - 1;
     float zl;
     orbit = 1.;
     for (int i = 0; i < ITERATIONS; i ++) {
@@ -64,7 +64,7 @@ float testPoint(vec3 c, out float orbit) {
 }
 
 vec3 intersectMandelbulb(in vec3 pos, in vec3 dir) {
-    float t = DETAIL;
+    float t = 0.01;
     for (int j = 0; j < RAYITERATIONS; j ++) {
 	/* Outside the fractal region? */
 	vec3 ipos = pos + dir * t;
@@ -86,7 +86,7 @@ vec3 intersectMandelbulb(in vec3 pos, in vec3 dir) {
 	    g = normalize(g);
 	    float diffuse = max(0.3, dot(LIGHT, g));
 	    vec3 color = abs(ipos) / length(ipos);
-	    return (color * diffuse * ao) / (1. + t * t);
+	    return (color * diffuse * ao) * exp(-t);
 	}
     }
 
