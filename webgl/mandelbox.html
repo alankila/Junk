@@ -140,9 +140,15 @@ vec3 mandelboxColor(in vec3 pos, in vec3 dir, in float t) {
 }
 
 vec3 srgb(vec3 color) {
-    vec3 linear = color * 12.92;
-    vec3 power = 1.055 * pow(color, vec3(1./2.4, 1./2.4, 1./2.4)) - 0.055;
-    return mix(linear, power, step(0.0031308, color));
+    /* Official sRGB conversion
+     * vec3 linear = color * 12.92;
+     * vec3 power = 1.055 * pow(color, vec3(1./2.4, 1./2.4, 1./2.4)) - 0.055;
+     * return mix(linear, power, step(0.0031308, color));
+     */
+
+    /* this is approximation has a maximum error of 2.5 %,
+     * and has less than 0.5 % of error for 99 % of the curve. */
+    return -0.14 * color + 1.14 * sqrt(color);
 }
 
 void main(void) {
