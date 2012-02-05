@@ -1,0 +1,179 @@
+<html><head><title>Clouds experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* System's clock, for running animations. */
+uniform float uTime;
+/* Position of camera. */
+uniform vec3 uPos;
+/* Lookat of camera. */
+uniform vec3 uDir;
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+
+const vec3 LIGHT = vec3(0.0, -0.707, 0.707);
+const vec3 UP = vec3(0.0, 0.0, 1.0);
+
+/* Cross product. */
+vec3 cross(in vec3 a, in vec3 b) {
+    return vec3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    );
+}
+
+vec3 srgb(vec3 color) {
+    return -0.14 * color + 1.14 * sqrt(color);
+}
+
+/* hash(), noise(), fbm() inspired by iñigo quilez. */
+float hash(float n) {
+    return fract(sin(n));
+}
+
+float noise(in vec3 x) {
+    vec3 p = floor(x);
+    vec3 f = fract(x);
+
+    f = f*f*(3.0-2.0*f);
+
+    float n = p.x + p.y*57.0 + 113.0*p.z;
+
+    float res = mix(mix(mix( hash(n+  0.0), hash(n+  1.0),f.x),
+                        mix( hash(n+ 57.0), hash(n+ 58.0),f.x),f.y),
+                    mix(mix( hash(n+113.0), hash(n+114.0),f.x),
+                        mix( hash(n+170.0), hash(n+171.0),f.x),f.y),f.z);
+    return res;
+}
+
+float fbm(vec3 p) {
+    float f = 0.0;
+    float w = 0.5;
+    for (int i = 0; i < 3; i ++) {
+	f += w * noise(p);
+	p *= 2.;
+	w *= 0.5;
+    }
+    return f;
+}
+
+float distance(vec3 p) {
+    float v = fbm(p * .25);
+    float c = 0.25 + p.z * p.z * .1;
+    return v - c;
+}
+
+vec4 cloudCast(in vec3 pos, in vec3 dir, out float t) {
+    t = 0.01;
+
+    float shading = 0.;
+    float opacity = 0.;
+    for (int i = 0; i < 100; i ++) {
+	vec3 p = pos + dir * t;
+	float d = distance(p);
+	if (d > 0.0) {
+	    opacity += d;
+	    if (opacity > 1.) {
+		opacity = 1.;
+	    }
+
+	    /* estimate degree of shading towards lightsource */
+	    float w = 0.125;
+	    float light = 0.0;
+	    for (int j = 0; j < 3; j ++) {
+		float p2 = distance(p + LIGHT * w);
+		if (p2 > 0.) {
+		    light += p2 / w;
+		}
+		w *= 2.;
+	    }
+
+	    shading += 0.25 * light * (1. - opacity);
+	    if (shading > 1.) {
+		shading = 1.;
+	    }
+
+	    if (opacity == 1. && shading == 1.) {
+		break;
+	    }
+	}
+
+	t += max(0.1, abs(d));
+	if (t > 8.0) {
+	    t = 8.0;
+	    break;
+	}
+    }
+
+    /*
+    vec3 p = pos + dir * t;
+
+    float gx = distance(p + vec3(-0.1, 0., 0.));
+    float gy = distance(p + vec3(0., -0.1, 0.));
+    float gz = distance(p + vec3(0., 0., -0.1));
+    vec3 g = normalize(vec3(gx, gy, gz));
+
+    vec3 dt = vec3(1., 1., 1.);
+
+    float ao = 0.0;
+    for (int i = 0; i <= 7; i ++) {
+	float d = distance(p + dt * .1);
+	ao += clamp(d * -5.0, 0., 1.);
+	dt.y *= dt.x;
+	dt.x = -dt.x;
+	if (i == 3) {
+	    dt.z = -dt.z;
+	}
+    }
+    return vec3(1., 1., 1.) * max(0., dot(g, LIGHT)) * min(1., ao / 2.);
+    */
+
+    shading = 1. - shading * .5;
+    return vec4(shading, shading, shading, opacity);
+}
+
+void main(void) {
+    /* Calculate an orthonormal base for rendering. */
+    vec3 left = normalize(cross(UP, uDir));
+    vec3 up = cross(uDir, left);
+
+    vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+    dir = normalize(dir);
+
+
+    float distance;
+    vec4 color = cloudCast(uPos, dir, distance);
+
+    /* sky + sun */
+    vec3 sky = mix(vec3(0.15, 0.175, 0.7), vec3(0.6, 0.6, 0.6), max(0., dot(dir, LIGHT)));
+    sky += smoothstep(0.998, 0.999, dot(dir, LIGHT));
+    vec3 finalColor = mix(sky, color.rgb, color.w);
+    gl_FragColor = vec4(srgb(finalColor), 1.);
+}
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+function effectInit(gl, shader) {
+    effectPos(0., 0., 2.);
+    effectStart(gl, shader);
+}
+</script>
+</head>
+<body>
+<canvas id="canvas" width="768" height="768"></canvas>
+</body>
+</html>
