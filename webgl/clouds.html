@@ -51,7 +51,7 @@ float noise(in vec3 x) {
 float fbm(vec3 p) {
     float f = 0.0;
     float w = 0.5;
-    for (int i = 0; i < 3; i ++) {
+    for (int i = 0; i < 5; i ++) {
 	f += w * noise(p);
 	p *= 2.;
 	w *= 0.5;
@@ -80,17 +80,9 @@ vec4 cloudCast(in vec3 pos, in vec3 dir, out float t) {
 	    }
 
 	    /* estimate degree of shading towards lightsource */
-	    float w = 0.125;
-	    float light = 0.0;
-	    for (int j = 0; j < 3; j ++) {
-		float p2 = distance(p + LIGHT * w);
-		if (p2 > 0.) {
-		    light += p2 / w;
-		}
-		w *= 2.;
-	    }
+	    float light = max(0., distance(p + LIGHT * .25));
 
-	    shading += 0.25 * light * (1. - opacity);
+	    shading += light * (1. - opacity);
 	    if (shading > 1.) {
 		shading = 1.;
 	    }
@@ -130,7 +122,7 @@ vec4 cloudCast(in vec3 pos, in vec3 dir, out float t) {
     return vec3(1., 1., 1.) * max(0., dot(g, LIGHT)) * min(1., ao / 2.);
     */
 
-    shading = 1. - shading * .5;
+    shading = 1. - shading;
     return vec4(shading, shading, shading, opacity);
 }
 
