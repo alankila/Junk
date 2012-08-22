@@ -141,7 +141,7 @@ var effectStart = function(gl, shader) {
         gl.uniform3f(shader.uPos, pos[0], pos[1], pos[2]);
         gl.uniform3f(shader.uDir, dx, dy, dz);
         onload.fps.removeChild(onload.fps.firstChild);
-        onload.fps.appendChild(document.createTextNode(Math.round(fpsNumber / lastTime) + " fps"));
+        onload.fps.appendChild(document.createTextNode(Math.round(fpsNumber / lastTime) + " fps, pos=[" + pos + "], dir=[" + [dx, dy, dz] + "]"));
         fpsNumber ++;
 
         gl.bindBuffer(gl.ARRAY_BUFFER, quadVertex);
