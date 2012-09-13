@@ -1,4 +1,5 @@
 var pos = [0, 0, 0];
+var maxSpeed = 1;
 
 function initShaders(gl) {
     var fragmentShader = getShader(gl, "shader-fs");
@@ -86,6 +87,10 @@ var effectPos = function(x, y, z) {
     pos = [x, y, z];
 }
 
+var effectSpeed = function(s) {
+    maxSpeed = s;
+}
+
 var effectStart = function(gl, shader) {
     /* Initialize the quad required for world rendering */
     var quadVertex = gl.createBuffer();
@@ -133,9 +138,9 @@ var effectStart = function(gl, shader) {
             pos[0] += dx * timeStep * speed;
             pos[1] += dy * timeStep * speed;
             pos[2] += dz * timeStep * speed;
-	    speed += timeStep;
-	    if (speed > 1.0) {
-		speed = 1.0;
+	    speed += timeStep * maxSpeed;
+	    if (speed > maxSpeed) {
+		speed = maxSpeed;
 	    }
 	}
         gl.uniform3f(shader.uPos, pos[0], pos[1], pos[2]);
