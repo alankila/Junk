@@ -2,13 +2,17 @@
 
 use strict;
 use Carp "confess";
+use Getopt::Long;
 
 our $USAGE = <<"USAGE";
 $0 <foo.qcow2>
 
 Prints fragmentation/efficiency information of a qcow2 file.
 USAGE
-die $USAGE unless @ARGV;
+
+GetOptions() or die $USAGE;
+
+die "Program requires exactly one non-option argument\n$USAGE" unless @ARGV == 1;
 
 sub avg {
 	if (@_ == 0) {
@@ -134,7 +138,7 @@ sub scan_clusters {
 		
 		$total_mapped_clusters += 1;
 		
-		if ($cluster_offset < $last_seen_offset) {
+		if ($cluster_offset < $last_seen_offset || $cluster_offset > $last_seen_offset + $cluster_size) {
 			$fragmentation_score ++;
 			push @ordered_chunk_size, $ordered_chunk_size;
 			$ordered_chunk_size = 0;

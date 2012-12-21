@@ -42,7 +42,7 @@ fragmentation scores, because snapshots are going to refer to locations earlier
 in the disk routinely.
 
 Ok, so my qcow2 file is fragmented. Now what?
-----------------------------------------------
+---------------------------------------------
 
 To defragment qcow2 file, shutdown the VM on it and rewrite it using
 qemu-img/kvm-img tool:
