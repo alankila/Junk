@@ -1,0 +1,69 @@
+What is this?
+-------------
+
+This tool measures qcow2 file internal fragmentation. Usage is simply:
+
+$ qcow2.pl file.qcow2
+
+Fragmentation measure is based on the length of what I loosely term contiguous
+clusters: these are clusters where both the physical and virtual address of the
+virtual -> physical mapping are ascending. It implies that contiguous reading
+of data in the virtual machine can perform contiguous reading on the host side.
+
+This suggests a method to measure fragmentation score: when walking through the
+virtual addresses, every time the physical address steps backwards in the file,
+the fragmentation score is increased by 1.  The fragmentation score is
+converted proportional to the image size by dividing it with the count of
+mapped clusters.
+
+Similarly, the average length of such contiguous clusters is measured.
+Together, these pieces of information can be used to determine the degree of
+fragmentation of the file.
+
+Why should I bother?
+--------------------
+
+On SSD, you can probably ignore the fragmentation problem entirely. However,
+on rotational media seek penalty still applies. Backwards seeks are adding
+significant latency to reading of a file, whereas short forward seeks are
+expected by the drive firmware and generally perform very well.
+
+Knowing about the degree of fragmentation and in particular average contiguous
+cluster length helps you determine if you are likely harmed by extra seeks.
+For instance, one disk image had average contiguous cluster length of just 5.6
+MB, and after defragging its average contiguous chunk rose to 300 MB.
+
+Snapshots
+---------
+
+The tool is ignorant of the snapshots in a file, it will simply read the active
+tables of the disk image. Files with snapshots are likely to get far worse
+fragmentation scores, because snapshots are going to refer to locations earlier
+in the disk routinely.
+
+Ok, so my qcow2 file is fragmented. Now what?
+----------------------------------------------
+
+To defragment qcow2 file, shutdown the VM on it and rewrite it using
+qemu-img/kvm-img tool:
+
+$ kvm-img convert -O qcow2 fragmentedfile.qcow2 defragmentedfile.qcow2
+
+You can then replace fragmentedfile by defragmentedfile after validating that your
+virtual machine still boots from the rewritten disk image.
+
+The big picture
+---------------
+
+To fully defragment the disk image, you need to also ensure that the disk image
+file itself is fairly contiguous on the host filesystem.  To defragment the
+file in host filesystem, use XFS, ext4 or btrfs filesystem, which all have
+defragmenting tools: xfs_fsr, e4defrag, and btrfs filesystem defragment.
+
+On my ext4 filesystems, I typically get around 120 MB extents after e4defrag,
+which implies that once average contiguous chunk lengths in qcow2 are of
+similar size, the host filesystem becomes the larger problem of the two.
+
+On xfs, contiguous chunks can be much larger.
+
+I have not yet tried btrfs for virtual machines.
