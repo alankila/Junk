@@ -4,13 +4,14 @@ use strict;
 use Carp "confess";
 use Getopt::Long;
 
+our $VERBOSE;
 our $USAGE = <<"USAGE";
-$0 <foo.qcow2>
+$0 [ --verbose ] <foo.qcow2>
 
 Prints fragmentation/efficiency information of a qcow2 file.
 USAGE
 
-GetOptions() or die $USAGE;
+GetOptions("verbose!", \$VERBOSE) or die $USAGE;
 
 die "Program requires exactly one non-option argument\n$USAGE" unless @ARGV == 1;
 
@@ -27,7 +28,7 @@ sub avg {
 
 sub read_data {
 	my ($fh, $pos, $len) = @_;
-	seek($fh, $pos, 0) || confess "Failed to move to position $pos: $!";
+	sysseek($fh, $pos, 0) || confess "Failed to move to position $pos: $!";
 	sysread($fh, my $data, $len) == $len || confess "Failed to read $len bytes of data at $pos: $!";	
 	return $data;
 }
@@ -77,6 +78,11 @@ sub size {
 
 sub load_l1_mapping {
 	my ($fh, $offset, $entries) = @_;
+
+	if ($VERBOSE) {
+		print sprintf("L1 table is at: %d bytes\n", $offset);
+	}
+
 	my $result = [];
 	for (my $pos = 0; $pos < $entries; $pos ++) {
 	    my $value = read_long($fh, $offset + 8 * $pos);
@@ -92,6 +98,10 @@ sub load_l2_mapping {
 	our %cache;
 	if ($cache{$offset}) {
 		return $cache{$offset};
+	}
+
+	if ($VERBOSE) {
+		print sprintf("L2 table is at: %d bytes\n", $offset);
 	}
 
 	my $result = [];
@@ -128,10 +138,15 @@ sub scan_clusters {
 		my $l2_index = ($offset >> $cluster_bits) % $l2_entries;
 		my $l1_index = int(($offset >> $cluster_bits) / $l2_entries);
 
-		my $l2_table = load_l2_mapping($fh, $l1_table->[$l1_index], $l2_entries);
-		my $cluster_offset = $l2_table->[$l2_index];
+		my $l2_offset = $l1_table->[$l1_index];
+		# No L2 table at all, skip
+		if ($l2_offset == 0) {
+			next;
+		}
 
-		# unmapped clusters don't count to frag score
+		my $l2_table = load_l2_mapping($fh, $l2_offset, $l2_entries);
+		my $cluster_offset = $l2_table->[$l2_index];
+		# Unmapped clusters don't count to frag score.
 		if ($cluster_offset == 0) {
 			next;
 		}
@@ -139,6 +154,9 @@ sub scan_clusters {
 		$total_mapped_clusters += 1;
 		
 		if ($cluster_offset < $last_seen_offset || $cluster_offset > $last_seen_offset + $cluster_size) {
+			if ($VERBOSE) {
+				print sprintf("Cluster %d begins after seek of %s\n", $cluster_offset >> $cluster_bits, size($cluster_offset - $last_seen_offset));
+			}
 			$fragmentation_score ++;
 			push @ordered_chunk_size, $ordered_chunk_size;
 			$ordered_chunk_size = 0;

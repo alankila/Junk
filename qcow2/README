@@ -11,8 +11,8 @@ virtual -> physical mapping are ascending. It implies that contiguous reading
 of data in the virtual machine can perform contiguous reading on the host side.
 
 This suggests a method to measure fragmentation score: when walking through the
-virtual addresses, every time the physical address steps backwards in the file,
-the fragmentation score is increased by 1.  The fragmentation score is
+virtual addresses, every time the physical<->logical addresses do not match
+exactly, the fragmentation score is increased by 1.  The fragmentation score is
 converted proportional to the image size by dividing it with the count of
 mapped clusters.
 
