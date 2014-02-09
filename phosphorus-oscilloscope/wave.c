@@ -116,16 +116,16 @@ static void output_image(const uint8_t *data, int width, int height, int stride)
     for (int y = 0; y < height; y += 1) {
         for (int x = 0; x < width; x += 1) {
             uint32_t value = *(int *) &data[y * stride + x * 4];
-            uint32_t ra = (value >> 16) & 0xff;
-            uint32_t ga = (value >>  8) & 0xff;
-            uint32_t ba = (value      ) & 0xff;
+            uint32_t ra = (value >> 20) & 0x3ff;
+            uint32_t ga = (value >> 10) & 0x3ff;
+            uint32_t ba = (value      ) & 0x3ff;
 
             /* Decide on whether to read the green or blue channel */
             float a;
             if (ba == 0) {
-                a = ga / 255.0f / 64.0f;
+                a = ga / 1023.0f / 64.0f;
             } else {
-                a = ra / 255.0f;
+                a = ra / 1023.0f;
             }
 
             uint8_t r = blend(1.0f, 0.0f, a);
@@ -147,7 +147,7 @@ static void output_image(const uint8_t *data, int width, int height, int stride)
 
 static void draw(const float *samples, int samples_length) {
     cairo_surface_t *surface = cairo_image_surface_create(
-        CAIRO_FORMAT_RGB24, 1000, 500
+        CAIRO_FORMAT_RGB30, 1000, 500
     );
 
     draw_samples(surface, samples, samples_length);
