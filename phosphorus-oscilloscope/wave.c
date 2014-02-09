@@ -59,22 +59,26 @@ static void draw_samples(cairo_surface_t *surface, const float *samples, const i
         float pos = i / (float) oversampling;
 
         float x2 = pos / samples_length * width;
-        float y2 = (get(samples, samples_length, pos) * 0.5f + 0.5f) * height;
+        float y2 = (get(samples, samples_length, pos) * 0.485f + 0.5f) * height; /* 0.485 => 3 % overshoot allowance */
         if (i != 0) {
             /* Compute intensity approximation for the line segment.
              * First, basic alpha is given by how many line segments in
-             * average must share a vertical slice */
+             * average must share a vertical slice. */
             float a = (float) width / samples_length;
             /* We then modulate it based on the derivative or spread
              * along the y axis -- the faster the signal moves, the
              * fainter the trace must be. y is in pixels here, so if
-             * dy = 0, then divide by 1, if dy = 1, divide by 2, etc. */
+             * dy = 0, then divide by 1, if dy = 1, divide by 2, etc.
+             *
+             * The ovesampling factor here corrects the derivative
+             * based on the idea that dy halves each time oversampling
+             * doubles, so the derivative becomes normalized. */
             a /= 1.0f + fabsf(y2 - y1) * oversampling;
 
             /* To enhance rendering quality, we store versions of alpha
              * at two resolutions. We also indicate overflow of green
              * in blue channel. */
-            cairo_set_source_rgb(cr, a, a * 16, a * 16 <= 1 ? 0 : 1);
+            cairo_set_source_rgb(cr, a, a * 64, a * 64 <= 1 ? 0 : 1);
             cairo_move_to(cr, x1, y1);
             cairo_line_to(cr, x2, y2);
             cairo_stroke(cr);
@@ -119,7 +123,7 @@ static void output_image(const uint8_t *data, int width, int height, int stride)
             /* Decide on whether to read the green or blue channel */
             float a;
             if (ba == 0) {
-                a = ga / 255.0f / 16.0f;
+                a = ga / 255.0f / 64.0f;
             } else {
                 a = ra / 255.0f;
             }
@@ -142,7 +146,6 @@ static void output_image(const uint8_t *data, int width, int height, int stride)
 }
 
 static void draw(const float *samples, int samples_length) {
-    /* RGB30 gives us 10 bits per component */
     cairo_surface_t *surface = cairo_image_surface_create(
         CAIRO_FORMAT_RGB24, 1000, 500
     );
