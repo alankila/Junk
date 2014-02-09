@@ -1,0 +1,3 @@
+Name: fake
+Version: 1.6
+Description: just here to allow build on OS X, set PKG_CONFIG_PATH=pkgconfig-fakes
