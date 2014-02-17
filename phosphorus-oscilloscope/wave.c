@@ -8,7 +8,6 @@
 static const int oversampling = 16;
 static const int points = 32;
 static const float pi = 3.141592654f;
-static float samples[1000];
 
 /* any finite value of x */
 static float sinc(float x)
@@ -120,9 +119,13 @@ static void output_image(const uint8_t *data, int width, int height, int stride)
             uint32_t ga = (value >> 10) & 0x3ff;
             uint32_t ba = (value      ) & 0x3ff;
 
-            /* Decide on whether to read the green or blue channel */
+            /* Decide on whether to read the green or blue channel.
+             * If blue has anything at all, that is because for that line segment,
+             * green component was clipped and is therefore unusable.
+             * Also, repeated blendings of line segments over the same pixels will
+             * in theory also cause G to overflow, which may occur without setting B. */
             float a;
-            if (ba == 0) {
+            if (ba == 0 && ga < 1023) {
                 a = ga / 1023.0f / 64.0f;
             } else {
                 a = ra / 1023.0f;
@@ -167,8 +170,13 @@ static void draw(const float *samples, int samples_length) {
 
 int main(int argv, char **argc)
 {
+    float samples[1000];
+    float x = 0;
+    float y = 0;
     for (int i = 0; i < sizeof(samples) / sizeof(samples[0]); i += 1) {
-        samples[i] = sinf(i * pi / 2 * (i * 0.0009f)) * cos(i * pi * 0.002f);
+        samples[i] = sinf(x) * cosf(y);
+        x += pi * (i * 0.0009f);
+        y += pi / 500;
     }
     draw(samples, sizeof(samples) / sizeof(samples[0]));
     return 0;
