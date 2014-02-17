@@ -89,14 +89,19 @@ static void draw_samples(cairo_surface_t *surface, const float *samples, const i
 }
 
 /* Approximated sRGB linear blend, source colors in linearized sRGB */
-static uint8_t blend(float fg, float bg, float alpha)
+static int32_t blend(float fg, float bg, float alpha)
 {
     float value = fg * alpha + bg * (1.0f - alpha);
     value = powf(value, 1.0f / 2.2f);
-    if (value > 1.0f) {
-        value = 1.0f;
-    }
-    return roundf(value * 255.0f);
+    return roundf(value * 65535.0f);
+}
+
+/* return fast random values for triangular dither */
+static uint8_t fastrand()
+{
+    static uint32_t seed = 1;
+    seed = seed * 22695477 + 1;
+    return seed >> 22;
 }
 
 /* perform linear light alpha blending of alpha mask, write result to png */
@@ -119,6 +124,9 @@ static void output_image(const uint8_t *data, int width, int height, int stride)
             uint32_t ga = (value >> 10) & 0x3ff;
             uint32_t ba = (value      ) & 0x3ff;
 
+            /* -255 .. 255 */
+            int32_t dither = fastrand() - fastrand();
+
             /* Decide on whether to read the green or blue channel.
              * If blue has anything at all, that is because for that line segment,
              * green component was clipped and is therefore unusable.
@@ -131,13 +139,37 @@ static void output_image(const uint8_t *data, int width, int height, int stride)
                 a = ra / 1023.0f;
             }
 
-            uint8_t r = blend(1.0f, 0.0f, a);
-            uint8_t g = blend(4.0f, 0.0f, a);
-            uint8_t b = blend(2.0f, 0.0f, a);
+            /* 0 .. 65535 or more */
+            int32_t r = blend(1.0f, 0.0f, a);
+            int32_t g = blend(4.0f, 0.0f, a);
+            int32_t b = blend(2.0f, 0.0f, a);
 
-            row[x*3+0] = r;
-            row[x*3+1] = g;
-            row[x*3+2] = b;
+            r += dither;
+            g += dither;
+            b += dither;
+
+            if (r > 65535) {
+                r = 65535;
+            }
+            if (r < 0) {
+                r = 0;
+            }
+            if (g > 65535) {
+                g = 65535;
+            }
+            if (g < 0) {
+                g = 0;
+            }
+            if (b > 65535) {
+                b = 65535;
+            }
+            if (b < 0) {
+                b = 0;
+            }
+
+            row[x*3+0] = r >> 8;
+            row[x*3+1] = g >> 8;
+            row[x*3+2] = b >> 8;
         }
         png_write_row(png, row);
     }
