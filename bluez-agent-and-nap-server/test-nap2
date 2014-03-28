@@ -1,0 +1,62 @@
+#!/usr/bin/python3.4
+
+from gi.repository import GObject
+
+import sys
+import dbus
+import dbus.service
+import dbus.mainloop.glib
+
+class Agent(dbus.service.Object):
+    @dbus.service.method("org.bluez.Agent", in_signature="", out_signature="")
+    def Release(self):
+        print("Released")
+
+    @dbus.service.method("org.bluez.Agent", in_signature="os", out_signature="")
+    def Authorize(self, device, uuid):
+        print("Authorized %s (%s)" % (device, uuid))
+
+    @dbus.service.method("org.bluez.Agent", in_signature="o", out_signature="s")
+    def RequestPinCode(self, device):
+        print("Pin code requested, returning 0000");
+        return "0000"
+
+    @dbus.service.method("org.bluez.Agent", in_signature="o", out_signature="u")
+    def RequestPasskey(self, device):
+        print("Pass key requested, returning 0");
+        return dbus.UInt32(0)
+
+    @dbus.service.method("org.bluez.Agent", in_signature="ou", out_signature="")
+    def DisplayPasskey(self, device, passkey):
+        print("DisplayPasskey (%s, %06d)" % (device, passkey))
+
+    @dbus.service.method("org.bluez.Agent", in_signature="os", out_signature="")
+    def DisplayPinCode(self, device, pincode):
+        print("DisplayPinCode (%s, %s)" % (device, pincode))
+        return pincode;
+
+    @dbus.service.method("org.bluez.Agent", in_signature="ou", out_signature="")
+    def RequestConfirmation(self, device, passkey):
+        print("Requested confirmation")
+
+    @dbus.service.method("org.bluez.Agent", in_signature="s", out_signature="")
+    def ConfirmModeChange(self, mode):
+        print("Confirmed mode change")
+
+    @dbus.service.method("org.bluez.Agent", in_signature="", out_signature="")
+    def Cancel(self):
+        print("Cancelled")
+
+if __name__ == '__main__':
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+
+    bus = dbus.SystemBus()
+    manager = dbus.Interface(bus.get_object("org.bluez", "/"), "org.bluez.Manager")
+    adapter = dbus.Interface(bus.get_object("org.bluez", manager.DefaultAdapter()), "org.bluez.Adapter")
+    path = "/test/nap"
+    agent = Agent(bus, path)
+    adapter.RegisterAgent(path, "NoInputNoOutput")
+
+    server = dbus.Interface(adapter, "org.bluez.NetworkServer")
+    server.Register("nap", "blue0")
+    GObject.MainLoop().run()
