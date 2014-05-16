@@ -16,13 +16,14 @@ class BackupServer(socketserver.StreamRequestHandler):
             returncode = subprocess.call(("/sbin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"))
 
         stream = self.rfile
-        stream = gzip.GzipFile(mode="rb", fileobj=stream)
         process = subprocess.Popen(args=("/sbin/btrfs", "receive", directory), stdin=subprocess.PIPE)
+        decompressor = gzip.zlib.decompressobj()
         while True:
-            data = stream.read(10240)
+            data = stream.read(65536)
             if not data:
                 break
-            process.stdin.write(data)
+            process.stdin.write(decompressor.decompress(data))
+        process.stdin.write(decompressor.flush())
         process.stdin.close()
         process.communicate()
         returncode = process.returncode

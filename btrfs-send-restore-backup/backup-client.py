@@ -2,31 +2,22 @@
 
 import gzip, os, socket, subprocess, sys
 
-class SockWriter(object):
-    __slots__ = ['s']
-    def __init__(self, s):
-        self.s = s
-    def fileno(self):
-        return self.s.fileno()
-    def write(self, data):
-        self.s.sendall(data)
-    def close(self):
-        self.s.shutdown(socket.SOCK_WR)
-
 # buffer in memory to avoid btrfs stalls
 def compress_send(cmd, out):
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=open("/dev/null"))
+
     frags = []
+    compressor = gzip.zlib.compressobj()
     while True:
         data = process.stdout.read(65536)
         if not data:
            break
-        frags.append(data)
+        frags.append(compressor.compress(data))
+    frags.append(compressor.flush())
 
     # when ready, write to output
     for data in frags:
-        out.write(data)
-    out.close()
+        out.sendall(data)
 
     process.communicate()
     return process.returncode
@@ -40,8 +31,6 @@ def backup_client(host, port, directory):
         print("Invalid server response to version exchange: {}".format(ack))
         return
    
-    output = gzip.GzipFile(mode="wb", fileobj=SockWriter(s))
-
     if not os.path.exists(directory + "/BACKUP"):
         process = subprocess.Popen(args=("/sbin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP"), stdout=subprocess.PIPE);
         process.communicate()
@@ -49,7 +38,7 @@ def backup_client(host, port, directory):
         if returncode == 0:
             returncode = subprocess.call(("/bin/sync", ))
         if returncode == 0:
-            returncode = compress_send(("/sbin/btrfs", "send", directory + "/BACKUP"), output)
+            returncode = compress_send(("/sbin/btrfs", "send", directory + "/BACKUP"), s)
     else: 
         if os.path.exists(directory + "/BACKUP-new"):
             process = subprocess.Popen(args=("/sbin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"), stdout=subprocess.PIPE)
@@ -60,7 +49,7 @@ def backup_client(host, port, directory):
         if returncode == 0:
             returncode = subprocess.call(("/bin/sync", ))
         if returncode == 0:
-            returncode = compress_send(("/sbin/btrfs", "send", "-p", directory + "/BACKUP", directory + "/BACKUP-new"), output)
+            returncode = compress_send(("/sbin/btrfs", "send", "-p", directory + "/BACKUP", directory + "/BACKUP-new"), s)
 
     s.shutdown(socket.SHUT_WR)
 
