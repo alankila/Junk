@@ -78,8 +78,8 @@ Results
 The sample audio I chose is one of the best case signals for this kind of
 compression, a single gradually decaying piano note. It is instructive to open
 the file in image editor to see why UP or PAETH predictor will do a good job on
-it. I was able to use libpng to compress the audio to 25k using the best zlib
-compression, whereas FLAC -8 compressed it to 27k.
+it. I was able to use libpng to compress the audio to 47k using the best zlib
+compression, whereas FLAC -8 compressed it to 52k.
 
 In other words, this half an hour's work beat FLAC in this simple test by about
 10 %.
