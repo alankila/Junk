@@ -25,7 +25,7 @@ static uint32_t read_file(const char* filename, int16_t **data, uint32_t *length
 
 static uint32_t autocorrelate(const int16_t *data, uint32_t length) {
     uint32_t min_window = 50;
-    uint32_t max_window = 1000;
+    uint32_t max_window = 2000;
 
     int64_t best_correlation = 0;
     uint32_t best_len = min_window;
