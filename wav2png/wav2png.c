@@ -31,7 +31,7 @@ static uint32_t autocorrelate(const int16_t *data, uint32_t length) {
     uint32_t best_len = min_window;
     for (uint32_t len = min_window; len <= max_window; len += 1) {
         int64_t correlation = 0;
-        for (uint32_t i = 0; i < length - len; i += 1) {
+        for (uint32_t i = 0; i < length - max_window; i += 1) {
             correlation += (int64_t) data[i] * data[i + len];
         }
         //fprintf(stderr, "autocorrelation: %lld for len %d %s\n", correlation, len, (correlation > best_correlation ? "*" : ""));
@@ -45,12 +45,12 @@ static uint32_t autocorrelate(const int16_t *data, uint32_t length) {
 }
 
 /* perform linear light alpha blending of alpha mask, write result to png */
-static void output_image(const int16_t *data, int width, int height)
+static void output_image(char *filename, const int16_t *data, int width, int height)
 {
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     png_infop info = png_create_info_struct(png);
 
-    FILE *file = fopen("test.png", "w");
+    FILE *file = fopen(filename, "w");
     png_init_io(png, file);
 
     png_set_IHDR(png, info, width, height, 16, PNG_COLOR_TYPE_GRAY, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_DEFAULT);
@@ -76,15 +76,16 @@ static void output_image(const int16_t *data, int width, int height)
 
 int main(int argc, char **argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s <wavfile>\n", argv[0]);
+    if (argc != 3) {
+        fprintf(stderr, "usage: %s <wavfile> <pngfile>\n", argv[0]);
         return 1;
     }
+    char *filename1 = argv[1];
+    char *filename2 = argv[2];
 
     int16_t *data;
     uint32_t length;
-    char *filename = argv[1];
-    if (read_file(filename, &data, &length)) {
+    if (read_file(filename1, &data, &length)) {
         return 1;
     }
 
@@ -92,7 +93,7 @@ int main(int argc, char **argv)
     uint32_t height = length / width;
 
     fprintf(stderr, "File truncated due to me being lame: %d => %d bytes, window=%d\n", length, width * height, width);
-    output_image(data, width, height);
+    output_image(filename2, data, width, height);
 
     return 0;
 }
