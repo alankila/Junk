@@ -1,5 +1,5 @@
-Beating FLAC in audio compression using libpng
-==============================================
+Beating FLAC with libpng
+========================
 
 None of the audio compression codecs seem to make use of autocorrelation when
 compressing audio.  To put it shortly, autocorrelation is the property of
