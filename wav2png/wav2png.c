@@ -5,11 +5,17 @@
 #include <zlib.h>
 
 static uint32_t read_file(const char* filename, int16_t **data, uint32_t *length) {
-    SF_INFO info;
+    SF_INFO info = {};
     SNDFILE *sf = sf_open(filename, SFM_READ, &info);
     if (sf == NULL) {
+        fprintf(stderr, "NULL result from sf_open()\n");
         return 1;
     }
+    if (info.channels != 1) {
+        fprintf(stderr, "Too many channels in file, only 1 allowed\n");
+        return 1;
+    }
+
     *length = info.frames;
     *data = calloc(sizeof(**data), *length);
     sf_read_short(sf, *data, *length);
@@ -28,7 +34,7 @@ static uint32_t autocorrelate(const int16_t *data, uint32_t length) {
         for (uint32_t i = 0; i < length - len; i += 1) {
             correlation += (int64_t) data[i] * data[i + len];
         }
-        fprintf(stderr, "autocorrelation: %ld for len %d %s\n", correlation, len, (correlation > best_correlation ? "*" : ""));
+        //fprintf(stderr, "autocorrelation: %lld for len %d %s\n", correlation, len, (correlation > best_correlation ? "*" : ""));
         if (correlation > best_correlation) {
             best_correlation = correlation;
             best_len = len;
@@ -79,7 +85,6 @@ int main(int argc, char **argv)
     uint32_t length;
     char *filename = argv[1];
     if (read_file(filename, &data, &length)) {
-        fprintf(stderr, "Error reading file\n");
         return 1;
     }
 
