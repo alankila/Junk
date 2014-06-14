@@ -62,8 +62,8 @@ static void output_image(const int16_t *data, int width, int height)
     for (int y = 0; y < height; y += 1) {
         for (int x = 0; x < width; x += 1) {
             uint16_t v = data[y * width + x] + 0x8000;
-            row[x*2+1] = v & 0xff;
             row[x*2+0] = v >> 8;
+            row[x*2+1] = v & 0xff;
         }
         png_write_row(png, row);
     }

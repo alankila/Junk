@@ -4,12 +4,17 @@ LDFLAGS := -lm `$(PKGCONFIG) sndfile --libs` `$(PKGCONFIG) libpng --libs`
 
 .phony: all clean
 
-all: wav2png
+all: wav2png png2wav
 
 clean:
-	rm -f wav2png.o wav2png test.png
+	rm -f png2wav.o png2wav wav2png.o wav2png
+
+png2wav.o: png2wav.c Makefile
 
 wav2png.o: wav2png.c Makefile
+
+png2wav: png2wav.o
+	$(CC) -o $@ $< $(LDFLAGS)
 
 wav2png: wav2png.o
 	$(CC) -o $@ $< $(LDFLAGS)

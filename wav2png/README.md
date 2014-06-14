@@ -7,7 +7,7 @@ signal resembling itself when shifted in time.
 
 It is formally defined as:
 
-    sum(f(x) * f(x - i))
+    a(i) = sum(f(x) * f(x - i))
 
 over some window, where i is the autocorrelation parameter. f(x) is the signal,
 typically normalized for values between -1 and 1. The objective is to find i >
@@ -53,17 +53,17 @@ experimenting with OPTIMUM coding as well, but I only really got good results
 by using a single predictor. I settled with PAETH.
 
 The Paeth algorithm is based on the previous samples in this kind of pattern,
-where X is the current sample being coded:
+where x is the current sample being coded:
 
     a b
-    c X
+    c x
 
 In image coding context, a and b are from the prior image row. In audio coding,
 a and b are taken from the sample stream behind the autocorrelation length
 which serves as "width" of the image. The X is predicted to be one of a, b or c
 based on whichever sample is the closest to the Paeth equation b - a + c. The
 equation can be understood as b - a measuring the change from a to b, and
-adding this to c gives a prediction for what c might be. The fact the
+adding this to c gives a prediction for what x might be. The fact the
 prediction is then replaced by one of the values a, b or c is because images
 often reuse the surrounding colors. In audio, such a notion makes no sense, and
 should be removed.
