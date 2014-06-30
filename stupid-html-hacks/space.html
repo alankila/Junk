@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<script src="jquery-2.1.1.js"></script>
+<style type="text/css">
+
+html, body {
+    width: 100%;
+    height: 100%;
+}
+
+.camera {
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+}
+
+.slide {
+    top: 0;
+    left: 0;
+    position: absolute;
+    background-color: #444;
+    color: white;
+    border: 4px solid #eee;
+    font-size: 20px;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: black;
+}
+
+</style>
+<script type="text/javascript">
+
+$(window).bind("load", init_space);
+
+function init_space() {
+    var body = $("body");
+    var bodyWidth = body.width();
+    var bodyHeight = body.height();
+    body.css({
+        perspective: "1000px"
+    });
+
+    var slides = $(".slide");
+    var slideNum = 0;
+
+    slides.each(function (idx, el) {
+        el = $(el);
+        el.width(bodyWidth - 8);
+        el.height(bodyHeight - 8);
+
+        var x = Math.round(Math.random() * 500 - 250);
+        var y = Math.round(Math.random() * 500 - 250);
+        var z = 1000 * idx;
+        el[0]._xform = [x, y, z];
+        el.css({
+            transform: "translate3D(" + x + "px, " + y + "px, " + z + "px)",
+            zIndex: -idx
+        });
+    });
+
+    var update = function() {
+        var next = slides[slideNum]._xform;
+        $(".camera").css({
+            transformStyle: "preserve-3d",
+            transform: "translate3d(" + -next[0] + "px, " + -next[1] + "px, " + -next[2] + "px)",
+            transitionDuration: "1000ms"
+        });
+        for (var i = 0; i < slides.length; i ++) {
+            $(slides[i]).css({
+                opacity: i != slideNum ? "0" : "100",
+                transitionDuration: "1000ms"
+            });
+        }
+    };
+
+    $(document).bind("keydown", function (ev) {
+        if (ev.keyCode == 39) {
+            if (slideNum != slides.length - 1) {
+                slideNum ++;
+                update();
+            }
+        }
+        if (ev.keyCode == 37) {
+            if (slideNum != 0) {
+                slideNum --;
+                update();
+            }
+        }
+    });
+   
+    (function () {
+        var next = slides[0]._xform;
+        $(".camera").css({
+            transform: "translate3d(" + -next[0] + "px, " + -next[1] + "px, " + -next[2] + "px)",
+        });
+        for (var i = 1; i < slides.length; i ++) {
+            $(slides[i]).css("opacity", "0");
+        }
+    })();
+}
+
+</script>
+<body>
+<div class="camera">
+
+<div class="slide" style="background-color: red">
+<p>S1
+asdf .,asdf jkashdf ljkahsdf jklahsdf jklahsdfjlk ahsdjklf hasjdklf aljksdhf ljkashdf jklahsdf a
+sdf asdfh öadfjsh ljkasdhf jlkasdhf ljkahsdf ljkhasdflkj ahsdflkjh asdljkh aslkjhdf ljkasdhf a
+sdf 
+asdf
+ asdf asdf asdf 
+asdf a
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+sdf asdf kjadshg lkjahsdgf jkadhsflkj ahsdfjlk ahsdfh asdlfkh asdljkfh akjlsdhf lkjasdhf jlkahsdflkj ahdf
+
+</p>
+</div>
+
+<div class="slide" style="background-color: green">
+<p>Slide 2
+asdfas fsad fahlödsf ljkasdhfjl kahsdjkfl ahsdfljk ahdsfjlk ahdkjlgh dsfjklgds fjklgh sdjklg sdkljg jkldsgh sdfkjg hsdkjlgh dkslg hdslkgh dkljgh sdfg 
+sdfg
+dfs
+g 
+sdfg 
+dsfg 
+dsg 
+sdfg sdfg sdfg sdfg
+ sd
+gsdfg sdfg
+</p>
+</div>
+
+<div class="slide" style="background-color: blue">
+<p>Slide 3
+sdaf asdf jadhsflkhdfjklasdjkf ahskljfajdlk sdjlkf ahjlkdsfhsdf a
+</p>
+</div>
+
+<div class="slide">
+4
+</div>
+
+<div class="slide">
+5
+</div>
+<div class="slide">
+6
+</div>
+<div class="slide">
+7
+</div>
+<div class="slide">
+8
+</div>
+<div class="slide">
+9
+</div>
+<div class="slide">
+10
+</div>
+<div class="slide">
+11
+</div>
+<div class="slide">
+12
+</div>
+<div class="slide">
+13
+</div>
+<div class="slide">
+14
+</div>
+
+</body>
+</html>
