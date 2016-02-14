@@ -1,4 +1,4 @@
-#!/usr/bin/python3.3
+#!/usr/bin/python3.4
 
 import gzip, os, socket, subprocess, sys
 
@@ -23,7 +23,7 @@ def compress_send(cmd, out):
     return process.returncode
 
 def backup_client(host, port, directory):
-    s = socket.create_connection((host, port), 600)
+    s = socket.create_connection((host, port), 1800)
     s.send(b"1\n")
 
     ack = s.recv(100).strip()
