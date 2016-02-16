@@ -1,0 +1,463 @@
+<!DOcTYPE html>
+<html lang="fi">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-15"/>
+    <title>Mah-jongg - tallying</title>
+    <style type="text/css">
+	body {
+	    background-color: #eef;
+	    color: black;
+	}
+	table {
+	    border-collapse: collapse;
+	    margin-bottom: 1em;
+	}
+	table td,
+	table th {
+	    border: 1px solid black;
+	    padding: 4px;
+	}
+	table th {
+	    font-weight: normal;
+	}
+	table td.east {
+	    background-color: #888;
+	}
+	input[type='text'] {
+	    text-align: right;
+	    border: 1px inset gray;
+	}
+	input:disabled {
+	    color: black;
+	    background-color: #ddd;
+	}
+	tr.name input {
+	    text-align: center;
+	}
+	tr.winds td {
+	    text-align: center;
+	}
+	.template {
+	    display: none;
+	}
+    </style>
+    <script type="text/javascript">
+
+    /* some generic helpers */
+    function list(arrayish) {
+	var res = [];
+	for (var i = 0; i < arrayish.length; i += 1)
+	    res.push(arrayish[i]);
+	return res;
+    }
+
+    function get_cookie(key) {
+	var pieces = document.cookie.split("; ");
+	for (var i = 0; i < pieces.length; i += 1) {
+	    var res = pieces[i].match(/^([^=]+)=(.*)/);
+	    if (res == null)
+		continue;
+	    if (res[1] == key)
+		return res[2];
+	}
+	return "";
+    }
+
+    function set_cookie(key, value) {
+	var cookiestr = key + "=" + value;
+	var expirydate = new Date();
+	expirydate.setTime(expirydate.getTime() + 86400 * 7);
+	cookiestr += "; expires=" + expirydate.toGMTString();
+	cookiestr += "; path=/";
+	document.cookie = cookiestr;
+    }
+
+    function player_exists(n) {
+        return document.getElementById("p"+n).value != "";
+    }
+
+    /* updates the grand total table at the bottom */
+    /* XXX this is good, works for any number of dealings */
+    function update_grand_total() {
+	var tbls = document.getElementById('gametable').getElementsByTagName("table");
+	var scores = [0, 0, 0, 0];
+	for (var i = 0; i < tbls.length; i ++) {
+	    var inputs = tbls[i].getElementsByTagName("tfoot")[0].getElementsByTagName("input");
+	    for (var j = 0; j < 4; j ++)
+		scores[j] += parseInt(inputs[j].value, 10) || 0;
+	}
+	var totals = document.getElementById('grandtotal').getElementsByTagName("tbody")[0].getElementsByTagName("td");
+	for (var i = 0; i < 4; i += 1)
+	    totals[i+1].innerHTML = player_exists(i+1) ? scores[i] : "";
+    }
+
+    function hook_select_descs_from_player_name_inputs(tblcontainer) {
+	var tbl = tblcontainer.firstChild;
+	var input = tbl.getElementsByTagName("thead")[0].getElementsByTagName("input");
+	var selects = tblcontainer.getElementsByTagName("select");
+
+	for (var i = 0; i < input.length; i += 1) {
+	    input[i]._player = i + 1;
+	    input[i].onchange = function() {
+		set_cookie("p" + this._player, this.value);
+		for (var i = 0; i < selects.length; i += 1) {
+		    if (selects[i].onchange)
+			selects[i].onchange();
+		}
+		this.onkeyup();
+	    };
+	    input[i].onkeyup = function() {
+		for (var i = 0; i < selects.length; i += 1) {
+		    var opts = selects[i].getElementsByTagName("option");
+		    var opt = opts[this._player];
+		    opt.replaceChild(document.createTextNode(this.value || "N/A"), opt.firstChild);
+		    opt.disabled = !this.value;
+		}
+		var tds = document.getElementById('grandtotal').getElementsByTagName("thead")[0].getElementsByTagName("td");
+		tds[this._player].innerHTML = this.value;
+	    };
+	    input[i].value = get_cookie("p" + input[i]._player);
+	    input[i].onchange();
+	}
+    }
+
+    function update_wind_direction_for_round(tbl) {
+        var dealings = construct_dealings(tbl);
+
+	var winds       = ["\u6771", "\u5357", "\u897f", "\u5317"];
+	var winds_title = ["East",   "South",  "West",   "North" ];
+	var roundnum    = ["First", "Second", "Third", "Fourth"];
+	var roundcontainer = tbl.getElementsByTagName("tbody")[0];
+        var rounds = roundcontainer.getElementsByTagName("tr");
+
+        var east = 1;
+        var i = 0;
+        while (east < 5 && !player_exists(east))
+            east ++;
+	while (east < 5) {
+            /* make new row if necessary */
+            if (! rounds[i]) {
+                roundcontainer.appendChild(tbl.rowtmpl.cloneNode(true));
+                var last = rounds[i].getElementsByTagName("td");
+                last = last[last.length - 1];
+                while (last.childNodes.length)
+                    last.removeChild(last.firstChild);
+                last.appendChild(rounds[0].getElementsByTagName("select")[0].cloneNode(true));
+
+                dealings = construct_dealings(tbl);
+            }
+
+	    var th = rounds[i].getElementsByTagName("th")[0];
+	    th.replaceChild(document.createTextNode(winds[tbl.round-1] + " " + east), th.firstChild);
+	    th.title = winds_title[tbl.round-1] + ", " + roundnum[east] + " round";
+	    
+	    /* mark east wind player */
+	    var td = rounds[i].getElementsByTagName("td");
+            for (var j = 0; j < td.length; j += 1)
+                td[j].className = east == j+1 ? "east" : "";
+
+            var winner = dealings.get_winner(i+1);
+            i ++;
+            if (! winner)
+                break;
+
+            /* if east wins, redo round. */
+            if (! document.getElementById('eastrepeat').checked || winner != east) {
+                east ++;
+                while (east < 5 && !player_exists(east))
+                    east ++;
+            }
+	}
+
+        /* spurious rows? delete them. */
+        while (i != 0 && rounds[i])
+            roundcontainer.removeChild(rounds[i]);
+        
+        put_functions_to_compute_subtotals(tbl);
+    }
+
+    /* constructs a 2-dimensional array that is easier to manipulate than the full DOM path */
+    /* XXX this code is good, it can deal with any number of dealings */
+    function construct_dealings(tbl) {
+	var dealings = list(tbl.getElementsByTagName("tbody")[0].getElementsByTagName("tr"));
+	dealings.unshift(null);
+	for (var i = 1; i < dealings.length; i += 1) {
+	    dealings[i] = list(dealings[i].getElementsByTagName("input"));
+	    dealings[i].unshift(null);
+	}
+
+        dealings.winners = list(tbl.getElementsByTagName("select"));
+        dealings.get_winner = function(d) {
+            return this.winners[d-1].selectedIndex;
+        };
+        dealings.player_is_east = function(p, d) {
+            return dealings[d][p].parentNode.className == 'east';
+        };
+
+        return dealings;
+    }
+
+    /* XXX this code is good, it can deal with any number of dealings */
+    function set_contents_to_cookie(tbl) {
+	var values = [];
+
+	var mahjongs = list(tbl.getElementsByTagName("select"));
+	for (var i = 0; i < mahjongs.length; i += 1)
+	    values.push(mahjongs[i].selectedIndex);
+
+        var dealings = construct_dealings(tbl);
+	for (var i = 1; i < dealings.length; i += 1) {
+	    for (var j = 1; j < 5; j += 1) {
+		values.push(dealings[i][j].value);
+	    }
+	}
+
+	set_cookie("r"+tbl.round, values.join(","));
+    }
+
+    /* XXX this code is good, it can deal with any number of dealings */
+    function refresh_contents_from_cookie(tbl) {
+	values = get_cookie("r"+tbl.round).split(",");
+	
+	var mahjongs = list(tbl.getElementsByTagName("select"));
+	for (var i = 0; i < mahjongs.length; i += 1) {
+	    mahjongs[i].selectedIndex = parseInt(values.shift(), 10) || 0;
+            update_wind_direction_for_round(tbl);
+	    if (mahjongs[i].onchange)
+		mahjongs[i].onchange();
+	}
+
+	var dealings = list(tbl.getElementsByTagName("tbody")[0].getElementsByTagName("tr"));
+	dealings.unshift(null);
+	for (var i = 1; i < dealings.length; i += 1) {
+	    dealings[i] = list(dealings[i].getElementsByTagName("input"));
+	    dealings[i].unshift(null);
+	}
+
+	for (var i = 1; i < dealings.length; i += 1) {
+	    for (var j = 1; j < 5; j += 1)
+		dealings[i][j].value = values.shift() || "";
+	} 
+    }
+
+    /* FIXME */
+    function put_functions_to_compute_subtotals(tbl) {
+        var dealings = construct_dealings(tbl);
+	
+        var totals = list(tbl.getElementsByTagName("tfoot")[0].getElementsByTagName("input"));
+	var mahjongs = list(tbl.getElementsByTagName("select"));
+	mahjongs.unshift(null);
+
+	for (var i = 1; i < dealings.length; i += 1) {
+	    for (var j = 1; j < 5; j += 1) {
+		dealings[i][j].onchange = function() {
+		    /* calculate how much others must pay to winner */
+		    var scores = [0, 0, 0, 0];
+		    for (var d = 1; d < dealings.length; d += 1) {
+			var winner = dealings.get_winner(d);
+
+			/* who won? round may be undecided yet */
+			if (! winner || ! player_exists(winner))
+			    continue;
+
+			/* prefix for inputs at this round, deal */
+			var winscore = parseInt(dealings[d][winner].value) || 0;
+			for (var p = 1; p < 5; p += 1) {
+			    if (! player_exists(p))
+				continue;
+
+			    var points = winscore;
+			    if (dealings.player_is_east(p, d) || dealings.player_is_east(winner, d))
+				points *= 2;
+
+			    scores[p-1]      -= points;
+			    scores[winner-1] += points;
+			}
+
+			/* move points between players who did not win */
+			for (var p1 = 1   ; p1 < 4; p1 += 1) {
+			for (var p2 = p1+1; p2 < 5; p2 += 1) {
+			    if (p1 == winner || p2 == winner)
+				continue;
+			    if (! player_exists(p1) || ! player_exists(p2))
+				continue;
+
+			    var v1 = parseInt(dealings[d][p1].value)||0;
+			    var v2 = parseInt(dealings[d][p2].value)||0;
+
+			    var diff = v2 - v1;
+			    if (dealings.player_is_east(p1, d) || dealings.player_is_east(p2, d))
+				diff *= 2;
+			    
+			    scores[p1-1] -= diff;
+			    scores[p2-1] += diff;
+			}
+			}
+		    }
+		    /* update score display */
+		    for (var p = 1; p < 5; p += 1) {
+                        totals[p-1].value = player_exists(p) ? scores[p-1] : "";
+		    }
+		    //set_contents_to_cookie(tbl);
+		    update_grand_total();
+		};
+	    }
+
+            mahjongs[i].dealidx = i;
+	    /* also updates score when jonged player is found */
+	    mahjongs[i].onchange = function() {
+                /* the input fields are disabled until a winner is
+                 * decided, he exists, and the player himself exists */
+                var winner = dealings.get_winner(this.dealidx);
+                for (p = 1; p < 5; p += 1)
+                    dealings[this.dealidx][p].disabled = !winner || !player_exists(winner) || !player_exists(p);
+
+                update_wind_direction_for_round(tbl);
+                dealings[1][1].onchange();
+            }
+	}
+    }
+    
+    function prebuild_round_table() {
+        var newtbl = document.getElementById('scoreboardtmpl').firstChild.cloneNode(true);
+
+        /* only the first row is visible */
+        var rows = newtbl.getElementsByTagName("tbody")[0];
+        var row = rows.getElementsByTagName("tr")[0];
+        newtbl.rowtmpl = row.cloneNode(true);
+
+        return newtbl;
+    }
+
+    window.onload = function() {
+	var f = document.getElementById('gametable');
+	for (var i = 1; i < 5; i += 1) {
+	    var tbl = prebuild_round_table();
+            tbl.round = i;
+
+	    update_wind_direction_for_round(tbl);
+	    put_functions_to_compute_subtotals(tbl);
+
+	    //refresh_contents_from_cookie(tbl, i);
+	    
+	    /* hide player name row when we are not generating first table */
+	    if (i != 1) {
+		var thead = tbl.getElementsByTagName("thead")[0];
+		tbl.removeChild(thead);
+	    }
+	    
+	    f.appendChild(tbl);
+	}
+	hook_select_descs_from_player_name_inputs(f);
+
+	var reset = document.createElement("input");
+	reset.setAttribute("type", "reset");
+	reset.setAttribute("value", "Clear the form");
+	reset.onclick = function() {
+	    return confirm("Erase the results permanently?");
+	};
+	f.appendChild(reset);
+	f.onreset = function() {
+	    var inputs = this.getElementsByTagName("input");
+	    for (var i = 0; i < inputs.length; i += 1) {
+		if (inputs[i].type != 'text')
+		    continue;
+		inputs[i].value = "";
+		if (inputs[i].onchange)
+		    inputs[i].onchange();
+	    }
+	    var selects = this.getElementsByTagName("select");
+	    for (var i = 0; i < selects.length; i += 1) {
+		selects[i].selectedIndex = 0;
+		if (selects[i].onchange)
+		    selects[i].onchange();
+	    }
+	    return true;
+	};
+    };
+
+    </script>
+</head>
+<body>
+
+<h1>Mah-jongg score tallying</h1>
+
+<p>Fill in the players from left to right. The leftmost player is
+   East for the first round. Then choose winner for each round and
+   fill in the scores.
+</p>
+
+<form>
+<label><input type="checkbox" id="eastrepeat"/> East victory repeats round?</label>
+<div id="gametable"></div>
+</form>
+
+<form class="template" id="scoreboardtmpl"
+><table>
+    <thead>
+    <tr class="name">
+	<th>Name</th>
+	<td><input type="text" size="8" id="p1" value=""/></td>
+	<td><input type="text" size="8" id="p2" value=""/></td>
+	<td><input type="text" size="8" id="p3" value=""/></td>
+	<td><input type="text" size="8" id="p4" value=""/></td>
+	<th>Mah-Jongg</th>
+    </tr>
+    </thead>
+
+    <tbody> 
+    <tr>
+	<th>Round data here...</td>
+	<td><input type="text" size="8" value=""/></td>
+	<td><input type="text" size="8" value=""/></td>
+	<td><input type="text" size="8" value=""/></td>
+	<td><input type="text" size="8" value=""/></td>
+	<td>
+	    <select>
+		<option name=""></option>
+		<option name="">p1</option>
+		<option name="">p2</option>
+		<option name="">p3</option>
+		<option name="">p4</option>
+	    </select>
+	</td>
+    </tr>
+    </tbody>
+    
+    <tfoot>
+    <tr>
+	<th>Round:</th>
+	<td><input disabled="disabled" type="text" size="8" value=""></td>
+	<td><input disabled="disabled" type="text" size="8" value=""></td>
+	<td><input disabled="disabled" type="text" size="8" value=""></td>
+	<td><input disabled="disabled" type="text" size="8" value=""></td>
+	<td></td>
+    </tr>
+    </tfoot>
+</table>
+</form>
+
+<table id="grandtotal">
+<thead>
+<tr>
+    <td>Name:</td>
+    <td></td>
+    <td></td>
+    <td></td>
+    <td></td>
+</tr>
+</thead>
+<tbody>
+<tr>
+    <td>Total:</td>
+    <td style="text-align: right"></td>
+    <td style="text-align: right"></td>
+    <td style="text-align: right"></td>
+    <td style="text-align: right"></td>
+</tr>
+</tbody>
+</table>
+</form>
+
+</body>
+</html>
