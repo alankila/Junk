@@ -1,18 +1,43 @@
 #!/usr/bin/python3.4
+# vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
 
-import gzip, os, socket, subprocess, sys
+import collections, gzip, os, socket, subprocess, sys, time
 
 # buffer in memory to avoid btrfs stalls
 def compress_send(cmd, out):
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=open("/dev/null"))
 
+    dq = collections.deque()
+    
     compressor = gzip.zlib.compressobj()
+    out.setblocking(0)
     while True:
         data = process.stdout.read(65536)
         if not data:
            break
+        data = compressor.compress(data)
+        if len(data):
+            dq.append(data)
+
+        while len(dq):
+            data = dq.popleft()
+            datalen = 0
+            try:
+                datalen = out.send(data)
+            except BlockingIOError:
+                pass
+            data = data[datalen:]
+            if len(data):
+                dq.appendleft(data)
+                if len(dq) > 1000:
+                    time.sleep(0.1)
+                else:
+                    break
+    dq.append(compressor.flush())
+    out.setblocking(1)
+
+    for data in dq:
         out.sendall(data)
-    out.sendall(compressor.flush())
 
     process.communicate()
     return process.returncode
