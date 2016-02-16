@@ -23,14 +23,14 @@ def compress_send(cmd, out):
         read, write, exceptional = select.select(readlist, writelist, []);
 
         if read:
-            data = process.stdout.read(65536)
+            data = process.stdout.read1(65536)
             if data:
                 datacompr = compressor.compress(data)
-                if datacompr:
-                    dq.append(datacompr)
-                #print("read[%d]: %d => %d" % (len(dq), len(data), len(datacompr)))
             else:
-                dq.append(compressor.flush())
+                datacompr = compressor.flush()
+            if datacompr:
+                dq.append(datacompr)
+            #print("read[%d]: %d => %d" % (len(dq), len(data), len(datacompr)))
 
         if write:
             data = dq.popleft()
