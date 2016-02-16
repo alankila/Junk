@@ -6,18 +6,13 @@ import gzip, os, socket, subprocess, sys
 def compress_send(cmd, out):
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=open("/dev/null"))
 
-    frags = []
     compressor = gzip.zlib.compressobj()
     while True:
         data = process.stdout.read(65536)
         if not data:
            break
-        frags.append(compressor.compress(data))
-    frags.append(compressor.flush())
-
-    # when ready, write to output
-    for data in frags:
-        out.sendall(data)
+	out.sendall(data)
+    out.sendall(compressor.flush())
 
     process.communicate()
     return process.returncode
@@ -32,24 +27,24 @@ def backup_client(host, port, directory):
         return
    
     if not os.path.exists(directory + "/BACKUP"):
-        process = subprocess.Popen(args=("/sbin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP"), stdout=subprocess.PIPE);
+        process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP"), stdout=subprocess.PIPE);
         process.communicate()
         returncode = process.returncode
         if returncode == 0:
             returncode = subprocess.call(("/bin/sync", ))
         if returncode == 0:
-            returncode = compress_send(("/sbin/btrfs", "send", directory + "/BACKUP"), s)
+            returncode = compress_send(("/bin/btrfs", "send", directory + "/BACKUP"), s)
     else: 
         if os.path.exists(directory + "/BACKUP-new"):
-            process = subprocess.Popen(args=("/sbin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"), stdout=subprocess.PIPE)
+            process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"), stdout=subprocess.PIPE)
             process.communicate()
-        process = subprocess.Popen(args=("/sbin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP-new"), stdout=subprocess.PIPE);
+        process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP-new"), stdout=subprocess.PIPE);
         process.communicate()
         returncode = process.returncode
         if returncode == 0:
             returncode = subprocess.call(("/bin/sync", ))
         if returncode == 0:
-            returncode = compress_send(("/sbin/btrfs", "send", "-p", directory + "/BACKUP", directory + "/BACKUP-new"), s)
+            returncode = compress_send(("/bin/btrfs", "send", "-p", directory + "/BACKUP", directory + "/BACKUP-new"), s)
 
     s.shutdown(socket.SHUT_WR)
 
@@ -57,7 +52,7 @@ def backup_client(host, port, directory):
         ack = s.recv(100).strip()
         if ack == b"OK":
             if os.path.exists(directory + "/BACKUP-new"):
-                process = subprocess.Popen(args=("/sbin/btrfs", "subvolume", "delete", directory + "/BACKUP"), stdout=subprocess.PIPE)
+                process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP"), stdout=subprocess.PIPE)
                 process.communicate()
                 os.rename(directory + "/BACKUP-new", directory + "/BACKUP")
         else:
@@ -66,7 +61,7 @@ def backup_client(host, port, directory):
         print("Failed at earlier step {}".format(returncode))
 
     if os.path.exists(directory + "/BACKUP-new"):
-        subprocess.call(("/sbin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"))
+        subprocess.call(("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"))
 
 if __name__ == "__main__":
     host, port, directory = sys.argv[1:]
