@@ -1,43 +1,44 @@
 #!/usr/bin/python3.4
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
 
-import collections, gzip, os, socket, subprocess, sys, time
+import collections, gzip, os, select, socket, subprocess, sys
 
 # buffer in memory to avoid btrfs stalls
 def compress_send(cmd, out):
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=open("/dev/null"))
 
     dq = collections.deque()
-    
+
     compressor = gzip.zlib.compressobj()
-    out.setblocking(0)
     while True:
-        data = process.stdout.read(65536)
-        if not data:
-           break
-        data = compressor.compress(data)
-        if len(data):
-            dq.append(data)
+        readlist = []
+        if not process.stdout.closed and len(dq) < 1000:
+            readlist.append(process.stdout)
+        writelist = []
+        if dq:
+            writelist.append(out)
 
-        while len(dq):
+        if not readlist and not writelist:
+            break
+        read, write, exceptional = select.select(readlist, writelist, []);
+
+        if read:
+            data = process.stdout.read(65536)
+            if data:
+                datacompr = compressor.compress(data)
+                if datacompr:
+                    dq.append(datacompr)
+                #print("read[%d]: %d => %d" % (len(dq), len(data), len(datacompr)))
+            else:
+                dq.append(compressor.flush())
+
+        if write:
             data = dq.popleft()
-            datalen = 0
-            try:
-                datalen = out.send(data)
-            except BlockingIOError:
-                pass
+            datalen = out.send(data)
+            #print("write[0]: %d / %d" % (datalen, len(data)))
             data = data[datalen:]
-            if len(data):
+            if data:
                 dq.appendleft(data)
-                if len(dq) > 1000:
-                    time.sleep(0.1)
-                else:
-                    break
-    dq.append(compressor.flush())
-    out.setblocking(1)
-
-    for data in dq:
-        out.sendall(data)
 
     process.communicate()
     return process.returncode
