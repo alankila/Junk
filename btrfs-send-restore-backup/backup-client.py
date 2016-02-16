@@ -11,7 +11,7 @@ def compress_send(cmd, out):
         data = process.stdout.read(65536)
         if not data:
            break
-	out.sendall(data)
+        out.sendall(data)
     out.sendall(compressor.flush())
 
     process.communicate()
