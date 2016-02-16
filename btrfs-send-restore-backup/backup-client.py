@@ -9,10 +9,11 @@ def compress_send(cmd, out):
 
     dq = collections.deque()
 
+    ready = False
     compressor = gzip.zlib.compressobj()
     while True:
         readlist = []
-        if not process.stdout.closed and len(dq) < 1000:
+        if not ready and len(dq) < 10000:
             readlist.append(process.stdout)
         writelist = []
         if dq:
@@ -20,7 +21,9 @@ def compress_send(cmd, out):
 
         if not readlist and not writelist:
             break
-        read, write, exceptional = select.select(readlist, writelist, []);
+        read, write, exceptional = select.select(readlist, writelist, [], 1800);
+        if not readlist and not writelist:
+            raise RuntimeException("Timeout")
 
         if read:
             data = process.stdout.read1(65536)
@@ -28,14 +31,15 @@ def compress_send(cmd, out):
                 datacompr = compressor.compress(data)
             else:
                 datacompr = compressor.flush()
+                ready = True
+            #print("read[%d]: %d => %d" % (len(dq), len(data), len(datacompr)))
             if datacompr:
                 dq.append(datacompr)
-            #print("read[%d]: %d => %d" % (len(dq), len(data), len(datacompr)))
 
         if write:
             data = dq.popleft()
             datalen = out.send(data)
-            #print("write[0]: %d / %d" % (datalen, len(data)))
+            #print("write[%d]: %d / %d" % (len(dq), datalen, len(data)))
             data = data[datalen:]
             if data:
                 dq.appendleft(data)
@@ -52,18 +56,19 @@ def backup_client(host, port, directory):
         print("Invalid server response to version exchange: {}".format(ack))
         return
    
+    if os.path.exists(directory + "/BACKUP-new"):
+        process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"), stdout=subprocess.PIPE)
+        process.communicate()
+
     if not os.path.exists(directory + "/BACKUP"):
-        process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP"), stdout=subprocess.PIPE);
+        process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP-new"), stdout=subprocess.PIPE);
         process.communicate()
         returncode = process.returncode
         if returncode == 0:
             returncode = subprocess.call(("/bin/sync", ))
         if returncode == 0:
-            returncode = compress_send(("/bin/btrfs", "send", directory + "/BACKUP"), s)
+            returncode = compress_send(("/bin/btrfs", "send", directory + "/BACKUP-new"), s)
     else: 
-        if os.path.exists(directory + "/BACKUP-new"):
-            process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"), stdout=subprocess.PIPE)
-            process.communicate()
         process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "snapshot", "-r", directory, directory + "/BACKUP-new"), stdout=subprocess.PIPE);
         process.communicate()
         returncode = process.returncode
@@ -78,16 +83,14 @@ def backup_client(host, port, directory):
         ack = s.recv(100).strip()
         if ack == b"OK":
             if os.path.exists(directory + "/BACKUP-new"):
-                process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP"), stdout=subprocess.PIPE)
-                process.communicate()
+                if os.path.exists(directory + "/BACKUP"):
+                    process = subprocess.Popen(args=("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP"), stdout=subprocess.PIPE)
+                    process.communicate()
                 os.rename(directory + "/BACKUP-new", directory + "/BACKUP")
         else:
             print("Error from server: {}".format(ack))
     else:
         print("Failed at earlier step {}".format(returncode))
-
-    if os.path.exists(directory + "/BACKUP-new"):
-        subprocess.call(("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP-new"))
 
 if __name__ == "__main__":
     host, port, directory = sys.argv[1:]

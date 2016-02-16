@@ -32,10 +32,11 @@ class BackupServer(socketserver.StreamRequestHandler):
         
         # when server is used in incremental mode, the new file is called BACKUP-new
         # if it's the initial sync, there is no file like this
-        if os.path.exists(directory + "/BACKUP-new"):
-            if returncode == 0:
-                returncode = subprocess.call(("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP"))
-            os.rename(directory + "/BACKUP-new", directory + "/BACKUP")
+        if returncode == 0:
+            if os.path.exists(directory + "/BACKUP-new"):
+                if os.path.exists(directory + "/BACKUP"):
+                    returncode = subprocess.call(("/bin/btrfs", "subvolume", "delete", directory + "/BACKUP"))
+                os.rename(directory + "/BACKUP-new", directory + "/BACKUP")
 
         if returncode == 0:
             self.wfile.write(b"OK\n")
