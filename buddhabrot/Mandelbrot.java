@@ -90,9 +90,9 @@ public class Mandelbrot {
 				double rr = (ra[y * DIM + x]);
 				double gg = (ga[y * DIM + x]);
 				double bb = (ba[y * DIM + x]);
-				int r = (int) Math.round(rr * 255 * 3);
-				int g = (int) Math.round(gg * 255 * 3);
-				int b = (int) Math.round(bb * 255 * 3);
+				int r = (int) Math.round(rr * 255.0 * 2.5);
+				int g = (int) Math.round(gg * 255.0 * 2.5);
+				int b = (int) Math.round(bb * 255.0 * 2.5);
 				r = Math.min(r, 255);
 				g = Math.min(g, 255);
 				b = Math.min(b, 255);
