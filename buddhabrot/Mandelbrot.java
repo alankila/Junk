@@ -1,85 +1,108 @@
-package fi.bel.rj.util;
-
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 
 import javax.imageio.ImageIO;
 
 public class Mandelbrot {
-	protected static final int ORBITS = (int) 1e7;
-	protected static final int ITER = 10240;
+	protected static final int ORBITS = (int) 1e8;
 	protected static final int DIM = 1024;
 
-	public static void main(String[] args) throws IOException {
-		float[] picture = new float[DIM * DIM];
-		
-		float[] orbit = new float[ITER * 2];
+	protected static void renderImage(float[] ra, float[] ga, float[] ba, int riter, int giter, int biter) {
+		int iterations = Math.max(Math.max(riter, giter), biter);
+		double[] orbit = new double[iterations * 2];
 		for (int i = 0; i < ORBITS; i ++) {
-			float Cre = (float) (Math.random() - 0.5) * 4;
-			float Cim = (float) (Math.random() - 0.5) * 4;
-			float a = 1;//(float) Math.random();
-			float Zre = Cre * a;
-			float Zim = Cim * a;
+			double Cre = (Math.random() - 0.5) * 4;
+			double Cim = (Math.random() - 0.5) * 4;
+
+			/* Reject two largest black areas right off the bat */
+			double p = Math.sqrt(Math.pow(Cre - 1/4.0, 2) + Cim * Cim);
+			if (Cre < p - 2 * p * p + 1 / 4.0 || Math.pow(Cre + 1, 2) + Cim * Cim < 1 / 16.0) {
+			    continue;
+			}
+
+			double a = 1;//Math.random();
+			double Zre = Cre * a;
+			double Zim = Cim * a;
 			
-			for (int j = 0; j < ITER; j ++) {
+			for (int j = 0; j < iterations; j ++) {
 				orbit[j * 2 + 0] = Zre;
 				orbit[j * 2 + 1] = Zim;
 				
 				/* Escaped */
-				if (Zre * Zre + Zim * Zim > 4) {
-					//System.out.println("orbit at " + j);
+				if (Zre * Zre + Zim * Zim > 4.0) {
 					for (int k = 0; k <= j; k ++) {
-						int y = Math.round(orbit[k * 2 + 0] * DIM / 4) + DIM / 2;
-						int x = Math.round(orbit[k * 2 + 1] * DIM / 4) + DIM / 2;
+						int y = (int) Math.round(orbit[k * 2 + 0] * DIM / 4) + DIM / 2;
+						int x = (int) Math.round(orbit[k * 2 + 1] * DIM / 4) + DIM / 2;
 						if (x < 0 || x >= DIM) {
 							continue;
 						}
 						if (y < 0 || y >= DIM) {
 							continue;
 						}
-						picture[y * DIM + x] += k;
+						if (j < riter) {
+							ra[y * DIM + x] += 1;
+						}
+						if (j < giter) {
+							ga[y * DIM + x] += 1;
+						}
+						if (j < biter) {
+							ba[y * DIM + x] += 1;
+						}
 					}
 					break;
 				}
 				
-			    float tmp = Zre * Zre - Zim * Zim + Cre;
+			    double tmp = Zre * Zre - Zim * Zim + Cre;
 			    Zim = 2 * Zre * Zim + Cim;
 			    Zre = tmp;
 			}
 			
-			if ((i % 10000000) == 0) {
+			if ((i % 1000000) == 0) {
 				System.out.println("iterations: " + i);
 			}
 		}
-		
+	}
+	
+	public static void normalize(float[] picture) {
 		float max = 0;
 		for (int i = 0; i < picture.length; i ++) {
 			max = Math.max(max, picture[i]);
 		}
-			
+		for (int i = 0; i < picture.length; i ++) {
+			picture[i] /= max;
+		}
+	}
+	
+	public static void main(String[] args) throws IOException {
+		float[] ra = new float[DIM * DIM];
+		float[] ga = new float[DIM * DIM];
+		float[] ba = new float[DIM * DIM];
+		renderImage(ra, ga, ba, 5000, 500, 50);
+		normalize(ra);
+		normalize(ga);
+		normalize(ba);
+		
 		BufferedImage bi = new BufferedImage(DIM, DIM, BufferedImage.TYPE_3BYTE_BGR);
 		for (int y = 0; y < DIM; y ++) {
 			for (int x = 0; x < DIM; x ++) {
-				float color = picture[y * DIM + x] / max * 65536;
-				int r = (int) Math.sqrt(color);
-				if (r > 255) {
-					r = 255;
-				}
-				int g = (int) Math.sqrt(color * 5);
-				if (g > 255) {
-					g = 255;
-				}
-				int b = (int) Math.sqrt(color * 10);
-				if (b > 255) {
-					b = 255;
-				}
+				double rr = (ra[y * DIM + x]);
+				double gg = (ga[y * DIM + x]);
+				double bb = (ba[y * DIM + x]);
+				int r = (int) Math.round(rr * 255 * 3);
+				int g = (int) Math.round(gg * 255 * 3);
+				int b = (int) Math.round(bb * 255 * 3);
+				r = Math.min(r, 255);
+				g = Math.min(g, 255);
+				b = Math.min(b, 255);
 				bi.setRGB(x, y, 0xff000000 | r << 16 | g << 8 | b);
 			}
 		}
-		try (FileOutputStream fos = new FileOutputStream("/Users/alankila/test.png")) {
+		try (FileOutputStream fos = new FileOutputStream("test2.png")) {
 			ImageIO.write(bi, "PNG", fos);
 		}
+		new File("test2.png").renameTo(new File("test.png"));
 		
 		System.out.println("done");
 	}
