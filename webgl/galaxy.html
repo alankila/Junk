@@ -1,0 +1,124 @@
+<html><head><title>Galaxy experiment</title><script id="shader-fs" type="x-shader/x-fragment"> 
+#ifdef GL_ES
+precision highp float;
+#endif
+
+/* System's clock, for running animations. */
+uniform float uTime;
+/* Position of camera. */
+uniform vec3 uPos;
+/* Lookat of camera. */
+uniform vec3 uDir;
+/* Coordinates being currently rendered. */
+varying vec2 vPosition;
+
+vec3 UP = vec3(0, 0, 1);
+
+/* Fast approximation, low error to real formula */
+vec3 srgb(vec3 color) {
+    return -0.14 * color + 1.14 * sqrt(color);
+}
+
+/* hash(), noise(), fbm() inspired by iñigo quilez. */
+float hash(float n) {
+    return fract(n * 13163.0 / 65536.0);
+}
+
+float noise(in vec3 x) {
+    vec3 p = floor(x);
+    vec3 f = fract(x);
+
+    f = f*f*(3.0-2.0*f);
+
+    float n = p.x + p.y*57.0 + 113.0*p.z;
+
+    float res = mix(mix(mix( hash(n+  0.0), hash(n+  1.0),f.x),
+                        mix( hash(n+ 57.0), hash(n+ 58.0),f.x),f.y),
+                    mix(mix( hash(n+113.0), hash(n+114.0),f.x),
+                        mix( hash(n+170.0), hash(n+171.0),f.x),f.y),f.z);
+    return res;
+}
+
+/* noise between 0 and 1 */
+float fbm(vec3 p, int octaves) {
+    float f = 0.0;
+    float w = 0.5;
+    for (int i = 0; i < 8; i ++) {
+	f += w * noise(p);
+	p *= 2.;
+	w *= 0.5;
+	if (i > octaves) {
+	    break;
+	}
+    }
+    return f;
+}
+
+vec3 castGalaxy(in vec3 origin, in vec3 dir) {
+    float attenuation = 1.0;
+    float distance = 0.1;
+    float resolution = 0.05;
+    vec3 outcolor = vec3(0, 0, 0);
+    for (int i = 0; i < 40; i ++) {
+	vec3 pos = origin + dir * distance;
+	float step = resolution * distance;
+
+	float galaxyDistance = length(pos * vec3(1, 1, 20));
+	float galaxyMod = 1.0 / (1.0 + galaxyDistance * galaxyDistance);
+	float noise = fbm(pos * 2.0, 8);
+	float matterDensity = noise * galaxyMod;
+
+	float spiral = .5 + .5 * sin(sqrt(pos.x * pos.x + pos.y * pos.y) * 4.0 + atan(pos.x, pos.y));
+
+	attenuation *= max(0.0, 1.0 - matterDensity * step * 10.0);
+
+	outcolor += vec3(1, 1, 1) * attenuation * spiral * matterDensity * 0.5;
+	distance += step;
+
+	if (distance > 6.0) {
+	    break;
+	}
+    }
+
+    return outcolor + (vec3(.5, .5, .5) + vec3(dir) * .5) * attenuation;
+}
+
+void main(void) {
+    /* Calculate an orthonormal base for rendering. */
+    vec3 left = normalize(cross(UP, uDir));
+    vec3 up = cross(uDir, left);
+
+    vec3 dir = uDir + vPosition.x * left + vPosition.y * up;
+    dir = normalize(dir);
+
+    vec3 color = castGalaxy(uPos, dir);
+    //vec3 color = vec3(0.5, 0.5, 0.5) + dir * 0.5;
+
+    /* sky + sun */
+    gl_FragColor = vec4(srgb(color), 1.);
+}
+</script> 
+
+<script id="shader-vs" type="x-shader/x-vertex"> 
+attribute vec3 aVertexPosition;
+
+varying vec2 vPosition;
+
+void main(void) {
+    gl_Position = vec4(aVertexPosition, 1.0);
+    vPosition = gl_Position.xy;
+}
+</script> 
+
+<script type="text/javascript" src="webgl.js"></script>
+<script type="text/javascript">
+function effectInit(gl, shader) {
+    effectPos(0., 0., 2.);
+    effectStart(gl, shader);
+}
+</script>
+</head>
+<body>
+<canvas id="canvas" width="384" height="384"></canvas>
+</body>
+</html>
