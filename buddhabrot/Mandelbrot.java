@@ -6,7 +6,7 @@ import java.io.IOException;
 import javax.imageio.ImageIO;
 
 public class Mandelbrot {
-	protected static final int ORBITS = (int) 1e8;
+	protected static final int ORBITS = (int) 1e7;
 	protected static final int DIM = 1024;
 
 	protected static void renderImage(float[] ra, float[] ga, float[] ba, int riter, int giter, int biter) {
@@ -42,13 +42,13 @@ public class Mandelbrot {
 							continue;
 						}
 						if (j < riter) {
-							ra[y * DIM + x] += 1;
+							ra[y * DIM + x] += k;
 						}
 						if (j < giter) {
-							ga[y * DIM + x] += 1;
+							ga[y * DIM + x] += k;
 						}
 						if (j < biter) {
-							ba[y * DIM + x] += 1;
+							ba[y * DIM + x] += k;
 						}
 					}
 					break;
@@ -87,12 +87,12 @@ public class Mandelbrot {
 		BufferedImage bi = new BufferedImage(DIM, DIM, BufferedImage.TYPE_3BYTE_BGR);
 		for (int y = 0; y < DIM; y ++) {
 			for (int x = 0; x < DIM; x ++) {
-				double rr = (ra[y * DIM + x]);
-				double gg = (ga[y * DIM + x]);
-				double bb = (ba[y * DIM + x]);
-				int r = (int) Math.round(rr * 255.0 * 2.5);
-				int g = (int) Math.round(gg * 255.0 * 2.5);
-				int b = (int) Math.round(bb * 255.0 * 2.5);
+				double rr = Math.sqrt(ra[y * DIM + x]);
+				double gg = Math.sqrt(ga[y * DIM + x]);
+				double bb = Math.sqrt(ba[y * DIM + x]);
+				int r = (int) Math.round(rr * 255.0);
+				int g = (int) Math.round(gg * 255.0);
+				int b = (int) Math.round(bb * 255.0);
 				r = Math.min(r, 255);
 				g = Math.min(g, 255);
 				b = Math.min(b, 255);
