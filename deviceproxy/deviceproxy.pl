@@ -61,38 +61,47 @@ my $dev_to_client = "";
 my $client_to_dev = "";
 while (1) {
     if (!$devfh) {
-        $devfh = IO::File->new($dev, "r+") || die "Failed to open $dev for rw: $!";
-        $devfh->blocking(0);
+        $devfh = IO::File->new($dev, "r+");
+	if ($devfh) {
+	    $devfh->blocking(0);
+	}
+	# we failed to open the device node.
+	# we are likely to try this very shortly again.
     }
 
     my $read = "";
     vec($read, fileno($socket), 1) = 1;
-    vec($read, fileno($devfh), 1) = 1;
+    if ($devfh) {
+	vec($read, fileno($devfh), 1) = 1;
+    }
     if ($client) {
 	vec($read, fileno($client), 1) = 1;
     }
 
     my $write = "";
-    if (length $client_to_dev) {
+    if ($devfh && length $client_to_dev) {
 	vec($write, fileno($devfh), 1) = 1;
     }
     if ($client && length $dev_to_client) {
 	vec($write, fileno($client), 1) = 1;
     }
 
-    # wait for something to happen
-    select($read, $write, undef, undef) || die "Failed to select (interrupt? error maybe: '$!')";
+    # wait for something to happen for 1s
+    select($read, $write, undef, 1);
 
     # new client.
     if (vec($read, fileno($socket), 1)) {
 	$client = $socket->accept();
 	$client->blocking(0);
     }
-    if (vec($read, fileno($devfh), 1)) {
+    if ($devfh && vec($read, fileno($devfh), 1)) {
 	my $chunk = sysread($devfh, $dev_to_client, $iolen, length($dev_to_client));
 	# EOF from device -- what should we do?
 	if (!$chunk) {
-	    #warn "Read EOF from device";
+	    # no data to move, sleep a little bit rather than busyloop on select
+	    # this happens at least on line printer devices. It probably doesn't
+	    # happen on serial devices. I don't know why Linux line printers report
+	    # EOF all time time when printer has nothing to say.
             if (!length $dev_to_client && !length $client_to_dev) {
                 select(undef, undef, undef, 0.1);
             }
@@ -105,7 +114,7 @@ while (1) {
 	    $client = undef;
 	}
     }
-    if (vec($write, fileno($devfh), 1)) {
+    if ($devfh && vec($write, fileno($devfh), 1)) {
 	my $chunk = syswrite($devfh, $client_to_dev, $iolen, 0);
         if (!$chunk) {
             $devfh = undef;
@@ -123,7 +132,8 @@ while (1) {
     }
 
     if (!$client && length $dev_to_client) {
-	# Not buffering device data when no client is connected
+	# Not buffering device data when no client is connected -- it proably doesn't matter
+	# client data is important, though.
 	$dev_to_client = "";
     }
 }
